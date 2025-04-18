@@ -613,6 +613,11 @@ class YulToVenom:
                 has_return = bool(target_func.returns)
                 return bb.append_invoke_instruction([target_label, *reversed(args)], returns=has_return)
             else:
+                # regular evm instruction
+                # special mappings: log1, log2.. -> log 1, log 2, ...
+                if expr.name in ("log0", "log1", "log2", "log3", "log4"):
+                    topic_count = int(expr.name[3])
+                    return bb.append_instruction("log", topic_count, *reversed(args))
                 return bb.append_instruction(expr.name, *reversed(args))
         raise NotImplementedError(f"Expr {type(expr)} not implemented: {expr}")
 

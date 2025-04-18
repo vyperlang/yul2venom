@@ -471,7 +471,7 @@ class YulToVenom:
         return_pc = self.return_pc
 
         bb = fn.get_basic_block()
-        bb.append_instruction("ret", return_pc, *return_args)
+        bb.append_instruction("ret", *return_args, return_pc)
 
     def _compile_block(self, block: Block, fn: IRFunction) -> None:
         for stmt in block.statements:
@@ -611,9 +611,9 @@ class YulToVenom:
                 target_func = self.functions[expr.name]
                 target_label = IRLabel(expr.name)
                 has_return = bool(target_func.returns)
-                return bb.append_invoke_instruction([target_label, *args], returns=has_return)
+                return bb.append_invoke_instruction([target_label, *reversed(args)], returns=has_return)
             else:
-                return bb.append_instruction(expr.name, *args)
+                return bb.append_instruction(expr.name, *reversed(args))
         raise NotImplementedError(f"Expr {type(expr)} not implemented: {expr}")
 
 

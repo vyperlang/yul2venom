@@ -449,9 +449,10 @@ class YulToVenom:
         for pname in fdef.params:
             var = IRVariable(pname)
             bb.append_instruction("param", ret=var)
-            fn.args.append(var)
+            fn.args.append(var)  # probably unnecessary
 
         self.return_pc = bb.append_instruction("param", annotation="return_pc")
+
         self.function = fn
 
         # Compile body
@@ -468,6 +469,7 @@ class YulToVenom:
         fdef = self.current_fdef
         fn = self.function
         return_args = [IRVariable(s) for s in fdef.returns]
+        assert len(return_args) <= 1, "multi return"
         return_pc = self.return_pc
 
         bb = fn.get_basic_block()
@@ -606,19 +608,21 @@ class YulToVenom:
         if isinstance(expr, str):
             return IRVariable(expr)
         if isinstance(expr, FuncCall):
-            args = [self._compile_expr(arg, bb) for arg in expr.args]
+            args = [self._compile_expr(arg, bb) for arg in reversed(expr.args)]
+
             if expr.name in self.functions:
                 target_func = self.functions[expr.name]
                 target_label = IRLabel(expr.name)
                 has_return = bool(target_func.returns)
-                return bb.append_invoke_instruction([target_label, *reversed(args)], returns=has_return)
+                return bb.append_invoke_instruction([target_label, *args], returns=has_return)
             else:
                 # regular evm instruction
                 # special mappings: log1, log2.. -> log 1, log 2, ...
                 if expr.name in ("log0", "log1", "log2", "log3", "log4"):
                     topic_count = int(expr.name[3])
-                    return bb.append_instruction("log", topic_count, *reversed(args))
-                return bb.append_instruction(expr.name, *reversed(args))
+                    return bb.append_instruction("log", topic_count, *args)
+                return bb.append_instruction(expr.name, *args)
+
         raise NotImplementedError(f"Expr {type(expr)} not implemented: {expr}")
 
 

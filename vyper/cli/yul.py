@@ -613,13 +613,13 @@ class YulToVenom:
             if expr.name in self.functions:
                 target_func = self.functions[expr.name]
                 target_label = IRLabel(expr.name)
-                has_return = bool(target_func.returns)
+                has_return = len(target_func.returns) > 0
                 return bb.append_invoke_instruction([target_label, *args], returns=has_return)
             else:
                 # regular evm instruction
                 # special mappings: log1, log2.. -> log 1, log 2, ...
-                if expr.name in ("log0", "log1", "log2", "log3", "log4"):
-                    topic_count = int(expr.name[3])
+                if expr.name.startswith("log"):
+                    topic_count = int(expr.name[3:])
                     return bb.append_instruction("log", topic_count, *args)
                 return bb.append_instruction(expr.name, *args)
 

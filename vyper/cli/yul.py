@@ -63,6 +63,8 @@ def _parse_args(argv: list[str]):
     ast = YulTransformer().transform(tree)
     ctx = compile_to_venom(ast)
 
+    check_venom_ctx(ctx)
+
     run_passes_on(ctx, OptimizationLevel.GAS)
     asm = generate_assembly_experimental(ctx)
     bytecode = generate_bytecode(asm, compiler_metadata=None)

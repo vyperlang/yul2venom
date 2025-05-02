@@ -437,7 +437,9 @@ class YulToVenom:
             bb.append_instruction("param", ret=var)
             fn.args.append(var)  # probably unnecessary
 
-        self.return_pc = bb.append_instruction("param", annotation="return_pc")
+        self.return_pc = bb.append_instruction("param")# annotation="return_pc")
+        # TODO: use annotation=return_pc
+        bb.instructions[-1].annotation = "return_pc"
 
         self.function = fn
 

@@ -65,6 +65,8 @@ def _parse_args(argv: list[str]):
 
     check_venom_ctx(ctx)
 
+    # print(ctx)
+
     run_passes_on(ctx, OptimizationLevel.GAS)
     asm = generate_assembly_experimental(ctx)
     bytecode = generate_bytecode(asm, compiler_metadata=None)
@@ -417,6 +419,10 @@ class YulToVenom:
             if isinstance(stmt, FunctionDef):
                 continue
             self._compile_statement(stmt, fn)
+
+            bb = fn.get_basic_block()
+            if not bb.is_terminated:
+                bb.append_instruction("stop")
 
         # Compile each function
         for fdef in self.functions.values():

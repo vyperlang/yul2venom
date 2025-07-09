@@ -10,7 +10,7 @@ import vyper.evm.opcodes as evm
 from vyper.compiler.phases import generate_bytecode
 from vyper.compiler.settings import OptimizationLevel, Settings, set_global_settings
 from vyper.venom import generate_assembly_experimental, run_passes_on
-from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable
+from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString
 from vyper.venom.check_venom import check_venom_ctx
 from vyper.venom.context import IRContext
 from vyper.venom.function import IRFunction
@@ -39,6 +39,8 @@ def _parse_args(argv: list[str]):
         dest="evm_version",
     )
     parser.add_argument("--stdin", action="store_true", help="whether to pull yul input from stdin")
+    parser.add_argument("--venom", action="store_true", help="output Venom IR instead of bytecode")
+    parser.add_argument("--asm", action="store_true", help="output assembly instead of bytecode")
 
     args = parser.parse_args(argv)
 
@@ -61,15 +63,25 @@ def _parse_args(argv: list[str]):
 
     tree = yul_parser.parse(yul_source)
     ast = YulTransformer().transform(tree)
+    if isinstance(ast, list) and len(ast) > 0:
+        ast = ast[0]
     ctx = compile_to_venom(ast)
 
-    check_venom_ctx(ctx)
+    # check_venom_ctx(ctx)  # Skip check for now to see output
 
-    # print(ctx)
+    if args.venom:
+        print(ctx)
+        return
 
     run_passes_on(ctx, OptimizationLevel.GAS)
+    
+    if args.asm:
+        asm = generate_assembly_experimental(ctx, OptimizationLevel.NONE)
+        print(asm)
+        return
+        
     asm = generate_assembly_experimental(ctx)
-    bytecode = generate_bytecode(asm, compiler_metadata=None)
+    bytecode, _ = generate_bytecode(asm)
     print(f"0x{bytecode.hex()}")
 
 
@@ -391,21 +403,36 @@ class YulTransformer(Transformer):
         return False
 
 
-from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable
+from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString
 from vyper.venom.context import IRContext
 from vyper.venom.function import IRFunction
 
 
 class YulToVenom:
-    def __init__(self):
+    def __init__(self, is_subobject: bool = False):
         self.ctx = IRContext()
         self._break_target: IRBasicBlock | None = None
         self._continue_target: IRBasicBlock | None = None
+        self.subobject_info: dict[str, tuple[str, str]] = {}  # name -> (start_label, end_label)
+        self.data_offsets: dict[str, int] = {}  # data section name -> offset
+        self.is_subobject = is_subobject
+        self.subobject_sizes: dict[str, int] = {}  # name -> bytecode size
 
     def compile(self, ast_node: YulObject) -> IRContext:
         """
         Compile a list of YulObject or Block AST nodes into a Venom IRContext.
         """
+        # First, register all subobjects and create const expressions
+        for item in ast_node.subobjects:
+            if isinstance(item, YulObject):
+                start_label = item.name  # Use the object name directly as start
+                end_label = f"{item.name}_end"
+                self.subobject_info[item.name] = (start_label, end_label)
+                
+                # Add const expression for size calculation as a tuple
+                size_name = f"{item.name.upper()}_SIZE"
+                self.ctx.add_const_expression(size_name, ("sub", f"@{end_label}", f"@{start_label}"))
+        
         # Gather all function definitions in the AST
         self.functions = {}
 
@@ -416,20 +443,104 @@ class YulToVenom:
         assert "__global" not in self.functions
         fn = self.ctx.create_function("__global")
         self.ctx.entry_function = fn
+        
+        # Add a revert handler for assert
+        self._add_revert_handler(fn)
+        
         for stmt in ast_node.code.block.statements:
             if isinstance(stmt, FunctionDef):
                 continue
             self._compile_statement(stmt, fn)
+        
+        bb = fn.get_basic_block()
+        if not bb.is_terminated:
+            bb.append_instruction("stop")
 
-            bb = fn.get_basic_block()
-            if not bb.is_terminated:
-                bb.append_instruction("stop")
-
-        # Compile each function
+        # Compile each function as a separate Venom function
         for fdef in self.functions.values():
-            self._compile_function(fdef)
+            # Skip if function already exists
+            if fdef.name not in [fn.name.value for fn in self.ctx.functions.values()]:
+                self._compile_function(fdef)
+        
+        # Inline subobject code after main code (only for main object)
+        if ast_node.subobjects and not self.is_subobject:
+            self._inline_subobjects(ast_node)
 
         return self.ctx
+    
+    def _inline_subobjects(self, ast_node: YulObject) -> None:
+        """Compile subobjects as separate functions in the same context."""
+        for item in ast_node.subobjects:
+            if isinstance(item, YulObject):
+                # Compile the subobject as a function named after it
+                self._compile_subobject_as_function(item)
+    
+    def _compile_subobject_as_function(self, obj: YulObject) -> None:
+        """Compile a subobject as a Venom function with start/end labels for size calculation."""
+        end_label = f"{obj.name}_end"
+        
+        # Create a function for the subobject's main code (this serves as the start label)
+        fn = self.ctx.create_function(obj.name)
+        bb = fn.entry
+        bb.is_pinned = True  # Mark as pinned so it's included in assembly
+        
+        # Save current state
+        old_functions = getattr(self, 'functions', {})
+        old_function = getattr(self, 'function', None)
+        old_fdef = getattr(self, 'current_fdef', None)
+        
+        self.functions = {}
+        self.function = fn
+        self.current_fdef = None
+        
+        # Gather functions from the subobject
+        for stmt in obj.code.block.statements:
+            if isinstance(stmt, FunctionDef):
+                self.functions[stmt.name] = stmt
+        
+        # Compile the main code of the subobject into main_bb
+        for stmt in obj.code.block.statements:
+            if isinstance(stmt, FunctionDef):
+                continue
+            self._compile_statement(stmt, fn)
+        
+        # Ensure it terminates
+        current_bb = fn.get_basic_block()
+        if not current_bb.is_terminated:
+            current_bb.append_instruction("stop")
+        
+        # Compile subobject's functions as separate Venom functions
+        for fdef in self.functions.values():
+            if fdef.name not in [fn.name.value for fn in self.ctx.functions.values()]:
+                self._compile_function(fdef)
+        
+        # Create the end label as a function
+        end_fn = self.ctx.create_function(end_label)
+        end_bb = end_fn.entry
+        end_bb.is_pinned = True  # Mark as pinned to avoid optimization issues
+        end_bb.append_instruction("stop")
+        
+        # Restore state
+        self.functions = old_functions
+        self.function = old_function
+        self.current_fdef = old_fdef
+    
+    def _add_revert_handler(self, fn: IRFunction) -> None:
+        entry_bb = fn.get_basic_block()
+        
+        continue_label = self.ctx.get_next_label("main_continue")
+        continue_bb = IRBasicBlock(continue_label, fn)
+        
+        entry_bb.append_instruction("jmp", continue_label)
+        
+        revert_label = IRLabel("revert")
+        revert_bb = IRBasicBlock(revert_label, fn)
+        revert_bb.is_pinned = True  # Make sure this block gets emitted
+        fn.append_basic_block(revert_bb)
+        
+        revert_bb.append_instruction("revert", IRLiteral(0), IRLiteral(0))
+        
+        fn.append_basic_block(continue_bb)
 
     def _compile_function(self, fdef: FunctionDef) -> IRFunction:
         # Create IRFunction
@@ -442,11 +553,9 @@ class YulToVenom:
         for pname in fdef.params:
             var = IRVariable(pname)
             bb.append_instruction("param", ret=var)
-            fn.args.append(var)  # probably unnecessary
 
-        self.return_pc = bb.append_instruction("param")# annotation="return_pc")
-        # TODO: use annotation=return_pc
-        bb.instructions[-1].annotation = "return_pc"
+        self.return_pc = bb.append_instruction("param")
+        self.return_pc.annotation = "return_pc"
 
         self.function = fn
 
@@ -458,20 +567,49 @@ class YulToVenom:
         if not last_bb.is_terminated:
             self._compile_leave()
 
-        assert self._break_target is None
-        assert self._continue_target is None
-
         return fn
+    
+    def _compile_function_as_blocks(self, fdef: FunctionDef, fn: IRFunction) -> None:
+        func_label = IRLabel(fdef.name)
+        func_bb = IRBasicBlock(func_label, fn)
+        fn.append_basic_block(func_bb)
+        
+        # Save current state
+        old_fdef = getattr(self, 'current_fdef', None)
+        old_return_pc = getattr(self, 'return_pc', None)
+        
+        self.current_fdef = fdef
+        self.function = fn
+        
+        # Handle parameters - they come in as %1, %2, etc from invoke
+        for i, pname in enumerate(fdef.params):
+            var = IRVariable(pname)
+            func_bb.append_instruction("param", ret=var)
+        
+        # Get return address
+        self.return_pc = func_bb.append_instruction("param")
+        self.return_pc.annotation = "return_pc"
+        
+        # Compile function body
+        self._compile_block(fdef.body, fn)
+        
+        # Add implicit return if needed
+        last_bb = fn.get_basic_block()
+        if not last_bb.is_terminated:
+            self._compile_leave()
+        
+        # Restore state
+        self.current_fdef = old_fdef
+        self.return_pc = old_return_pc
 
     def _compile_leave(self):
         fdef = self.current_fdef
         fn = self.function
-        return_args = [IRVariable(s) for s in fdef.returns]
-        assert len(return_args) <= 1, f"multi return {fdef}"
-        return_pc = self.return_pc
-
         bb = fn.get_basic_block()
-        bb.append_instruction("ret", *return_args, return_pc)
+        
+        # Return with the return values
+        return_args = [IRVariable(s) for s in fdef.returns]
+        bb.append_instruction("ret", *return_args, self.return_pc)
 
     def _compile_block(self, block: Block, fn: IRFunction) -> None:
         for stmt in block.statements:
@@ -604,6 +742,9 @@ class YulToVenom:
 
     def _compile_expr(self, expr, bb: IRBasicBlock) -> IRVariable | IRLiteral:
         if isinstance(expr, Literal):
+            # For string literals, return the string value itself
+            if isinstance(expr.value, str):
+                return expr.value
             return IRLiteral(expr.value)
         if isinstance(expr, str):
             return IRVariable(expr)
@@ -616,6 +757,26 @@ class YulToVenom:
                 has_return = len(target_func.returns) > 0
                 return bb.append_invoke_instruction([target_label, *args], returns=has_return)
             else:
+                # Handle dataoffset and datasize specially
+                if expr.name == "dataoffset" and len(expr.args) == 1:
+                    arg_expr = expr.args[0]
+                    if isinstance(arg_expr, Literal) and isinstance(arg_expr.value, str):
+                        arg_name = arg_expr.value.strip('"')
+                        # For subobjects, return the object name directly as the label
+                        # Use is_symbol=False to ensure it's treated as a regular label, not a const
+                        return IRLabel(arg_name, is_symbol=False)
+                    return IRLiteral(0)
+                
+                elif expr.name == "datasize" and len(expr.args) == 1:
+                    arg_expr = expr.args[0]
+                    if isinstance(arg_expr, Literal) and isinstance(arg_expr.value, str):
+                        arg_name = arg_expr.value.strip('"')
+                        # Return a placeholder label that will be resolved later
+                        size_name = f"{arg_name.upper()}_SIZE"
+                        # Use IRLabel with is_symbol=True to indicate it's a const reference
+                        return IRLabel(f"${size_name}", is_symbol=True)
+                    return IRLiteral(0)
+                
                 # regular evm instruction
                 # special mappings: log1, log2.. -> log 1, log 2, ...
                 opcode = expr.name

@@ -762,7 +762,7 @@ class YulToVenom:
                         # Return a placeholder label that will be resolved later
                         size_name = f"{arg_name.upper()}_SIZE"
                         # Use IRLabel with is_symbol=True to indicate it's a const reference
-                        return IRLabel(f"${size_name}", is_symbol=True)
+                        return IRLabel(size_name, is_symbol=True)
                     return IRLiteral(0)
                 
                 # regular evm instruction

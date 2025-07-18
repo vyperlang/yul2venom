@@ -10,7 +10,7 @@ import vyper.evm.opcodes as evm
 from vyper.compiler.phases import generate_bytecode
 from vyper.compiler.settings import OptimizationLevel, Settings, set_global_settings
 from vyper.venom import generate_assembly_experimental, run_passes_on
-from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString
+from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString, LabelRef
 from vyper.venom.check_venom import check_venom_ctx
 from vyper.venom.context import IRContext
 from vyper.venom.function import IRFunction
@@ -403,7 +403,7 @@ class YulTransformer(Transformer):
         return False
 
 
-from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString
+from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable, IRHexString, LabelRef
 from vyper.venom.context import IRContext
 from vyper.venom.function import IRFunction
 
@@ -431,7 +431,7 @@ class YulToVenom:
                 
                 # Add const expression for size calculation as a tuple
                 size_name = f"{item.name.upper()}_SIZE"
-                self.ctx.add_const_expression(size_name, ("sub", f"@{end_label}", f"@{start_label}"))
+                self.ctx.add_const_expression(size_name, ("sub", LabelRef(end_label), LabelRef(start_label)))
         
         # Gather all function definitions in the AST
         self.functions = {}

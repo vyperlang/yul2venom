@@ -22,7 +22,6 @@ import yul as yul_module
 from vyper.venom import generate_assembly_experimental
 from vyper.compiler.phases import generate_bytecode
 from vyper.compiler.settings import OptimizationLevel
-from vyper.evm.assembler.instructions import DataHeader, DATA_ITEM, Label
 
 
 class YulTranspiler:
@@ -88,10 +87,9 @@ class YulTranspiler:
             ctx.functions = original_functions
 
         # Inject embedded bytecode (data sections) if present
-        if hasattr(ctx, "embedded_bytecode"):
-            for label_name, bytecode in ctx.embedded_bytecode.items():
-                asm.extend([DataHeader(Label(label_name)), DATA_ITEM(bytecode)])
-        # Program-end label is now appended by Vyper venom assembler when present
+        embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+        program_end_label_name = getattr(ctx, "program_end_label_name", None)
+        asm = yul_module.inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
         
         # Generate bytecode
         bytecode, _ = generate_bytecode(asm)
@@ -169,10 +167,9 @@ class YulTranspiler:
             ctx.functions = original_functions
 
         # Inject embedded bytecode (data sections) if present
-        if hasattr(ctx, "embedded_bytecode"):
-            for label_name, bytecode in ctx.embedded_bytecode.items():
-                asm.extend([DataHeader(Label(label_name)), DATA_ITEM(bytecode)])
-        # Program-end label is appended by Vyper venom assembler
+        embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+        program_end_label_name = getattr(ctx, "program_end_label_name", None)
+        asm = yul_module.inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
         
         return str(asm)
     

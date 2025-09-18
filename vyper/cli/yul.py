@@ -22,20 +22,29 @@ bytecode.
 """
 
 
-def inject_embedded_bytecode(asm, embedded_bytecode):
+def inject_embedded_bytecode(
+    asm, embedded_bytecode, program_end_label_name: str | None = None
+):
     """Inject embedded bytecode into the assembly as raw data."""
-    if not embedded_bytecode:
-        return asm
-    
+
     from vyper.evm.assembler.instructions import DataHeader, DATA_ITEM, Label
-    
-    # Append the embedded bytecode at the end of the assembly
-    # Using the same format as Vyper uses for runtime code
-    for label_name, bytecode in embedded_bytecode.items():
-        # Create a data segment with label and bytecode
-        data_segment = [DataHeader(Label(label_name)), DATA_ITEM(bytecode)]
-        asm.extend(data_segment)
-    
+
+    if embedded_bytecode:
+        # Append the embedded bytecode at the end of the assembly using the
+        # same format as Vyper uses for runtime code
+        for label_name, bytecode in embedded_bytecode.items():
+            data_segment = [DataHeader(Label(label_name)), DATA_ITEM(bytecode)]
+            asm.extend(data_segment)
+
+    if program_end_label_name:
+        # Ensure a label exists to mark the end of the program so datasize()
+        # can resolve to a concrete offset during assembly.
+        program_end_label = Label(program_end_label_name)
+        if not any(
+            isinstance(item, Label) and item.label == program_end_label_name for item in asm
+        ):
+            asm.append(program_end_label)
+
     return asm
 
 def _parse_cli_args():
@@ -129,18 +138,20 @@ def _parse_args(argv: list[str]):
         asm = generate_assembly_experimental(ctx)
         # Restore original functions for display
         ctx.functions = original_functions
-        # Handle embedded bytecode if present
-        if hasattr(ctx, 'embedded_bytecode'):
-            asm = inject_embedded_bytecode(asm, ctx.embedded_bytecode)
+        # Handle embedded bytecode and append program end label if present
+        embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+        program_end_label_name = getattr(ctx, "program_end_label_name", None)
+        asm = inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
         print(asm)
         return
         
     asm = generate_assembly_experimental(ctx)
     # Restore original functions
     ctx.functions = original_functions
-    # Handle embedded bytecode if present  
-    if hasattr(ctx, 'embedded_bytecode'):
-        asm = inject_embedded_bytecode(asm, ctx.embedded_bytecode)
+    # Handle embedded bytecode and append program end label if present
+    embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+    program_end_label_name = getattr(ctx, "program_end_label_name", None)
+    asm = inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
     bytecode, _ = generate_bytecode(asm)
     print(f"0x{bytecode.hex()}")
 

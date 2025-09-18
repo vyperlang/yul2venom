@@ -761,23 +761,53 @@ class YulToVenom:
                     val = self._compile_expr(stmt.init, bb)
                     if len(stmt.names) > 1:
                         # Multiple variable declaration - Yul allows this for functions with multiple returns
-                        # For now, assign first and zero-initialize the rest (fallback behavior)
-                        bb.append_instruction("assign", val, ret=IRVariable(stmt.names[0]))
-                        for name in stmt.names[1:]:
-                            bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(name))
+                        if isinstance(val, list):
+                            # Function returned multiple values - unpack them
+                            for i, name in enumerate(stmt.names):
+                                if i < len(val):
+                                    bb.append_instruction("assign", val[i], ret=IRVariable(name))
+                                else:
+                                    # If fewer returns than names, zero-initialize the rest
+                                    bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(name))
+                        else:
+                            # Single value returned but multiple variables declared
+                            # Assign to first, zero-initialize the rest (fallback behavior)
+                            bb.append_instruction("assign", val, ret=IRVariable(stmt.names[0]))
+                            for name in stmt.names[1:]:
+                                bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(name))
                     else:
-                        bb.append_instruction("assign", val, ret=IRVariable(stmt.names[0]))
+                        # Single variable declaration
+                        if isinstance(val, list):
+                            # Function returned multiple values but we only need one
+                            bb.append_instruction("assign", val[0] if val else IRLiteral(0), ret=IRVariable(stmt.names[0]))
+                        else:
+                            bb.append_instruction("assign", val, ret=IRVariable(stmt.names[0]))
 
         elif isinstance(stmt, Assign):
             val = self._compile_expr(stmt.value, bb)
             if len(stmt.targets) > 1:
-                # Multiple assignment - similar to VarDecl with multiple names
-                bb.append_instruction("assign", val, ret=IRVariable(stmt.targets[0]))
-                # Initialize other targets to 0 to avoid undefined references
-                for target in stmt.targets[1:]:
-                    bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(target))
+                # Multiple assignment - handle multi-return functions
+                if isinstance(val, list):
+                    # Function returned multiple values - unpack them
+                    for i, target in enumerate(stmt.targets):
+                        if i < len(val):
+                            bb.append_instruction("assign", val[i], ret=IRVariable(target))
+                        else:
+                            # If fewer returns than targets, zero-initialize the rest
+                            bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(target))
+                else:
+                    # Single value returned but multiple targets
+                    # Assign to first, zero-initialize the rest
+                    bb.append_instruction("assign", val, ret=IRVariable(stmt.targets[0]))
+                    for target in stmt.targets[1:]:
+                        bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(target))
             else:
-                bb.append_instruction("assign", val, ret=IRVariable(stmt.targets[0]))
+                # Single target
+                if isinstance(val, list):
+                    # Function returned multiple values but we only need one
+                    bb.append_instruction("assign", val[0] if val else IRLiteral(0), ret=IRVariable(stmt.targets[0]))
+                else:
+                    bb.append_instruction("assign", val, ret=IRVariable(stmt.targets[0]))
 
         elif isinstance(stmt, ExprStmt):
             self._compile_expr(stmt.expr, bb)
@@ -934,8 +964,10 @@ class YulToVenom:
             if expr.name in self.functions:
                 target_func = self.functions[expr.name]
                 target_label = IRLabel(expr.name)
-                has_return = len(target_func.returns) > 0
-                return bb.append_invoke_instruction([target_label, *args], returns=has_return)
+                num_returns = len(target_func.returns)
+                # Pass 1 for single returns (backwards compatible), actual count for multi-returns
+                returns_param = 1 if num_returns == 1 else num_returns if num_returns > 1 else False
+                return bb.append_invoke_instruction([target_label, *args], returns=returns_param)
             else:
                 # Handle dataoffset and datasize specially
                 if expr.name == "dataoffset" and len(expr.args) == 1:

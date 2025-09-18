@@ -978,7 +978,8 @@ class YulToVenom:
                 num_returns = len(target_func.returns)
                 # Pass 1 for single returns (backwards compatible), actual count for multi-returns
                 returns_param = 1 if num_returns == 1 else num_returns if num_returns > 1 else False
-                return bb.append_invoke_instruction([target_label, *args], returns=returns_param)
+                invoke_args = [target_label, *reversed(args)]
+                return bb.append_invoke_instruction(invoke_args, returns=returns_param)
             else:
                 # Handle dataoffset and datasize specially
                 if expr.name == "dataoffset" and len(expr.args) == 1:

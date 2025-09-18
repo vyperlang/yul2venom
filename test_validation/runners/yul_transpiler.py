@@ -22,6 +22,7 @@ import yul as yul_module
 from vyper.venom import generate_assembly_experimental
 from vyper.compiler.phases import generate_bytecode
 from vyper.compiler.settings import OptimizationLevel
+from vyper.evm.assembler.instructions import DataHeader, DATA_ITEM, Label
 
 
 class YulTranspiler:
@@ -68,22 +69,29 @@ class YulTranspiler:
         # Note: compile_to_venom doesn't take evm_version parameter
         ctx = yul_module.compile_to_venom(ast)
         
-        # Apply optimizations if requested
-        if optimize:
-            from vyper.venom import run_passes_on
-            run_passes_on(ctx, OptimizationLevel.GAS)
-        else:
-            # Even without optimization, we need CFG normalization for assembly generation
-            from vyper.venom.passes.cfg_normalization import CFGNormalization
-            from vyper.venom.analysis import IRAnalysesCache
-            
-            for fn in ctx.functions.values():
-                ac = IRAnalysesCache(fn)
-                CFGNormalization(ac, fn).run_pass()
+        # Always run the Venom pass pipeline to satisfy codegen invariants.
+        # Filter out data-only functions before running passes/assembly.
+        from vyper.venom import run_passes_on
+        original_functions = getattr(ctx, "functions", None)
+        if hasattr(ctx, "functions"):
+            ctx.functions = {name: fn for name, fn in ctx.functions.items()
+                             if not getattr(fn, "is_data_section", False)}
+        run_passes_on(ctx, OptimizationLevel.GAS if optimize else OptimizationLevel.NONE)
         
         # Generate assembly
-        asm = generate_assembly_experimental(ctx, 
-            OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS)
+        asm = generate_assembly_experimental(
+            ctx, OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS
+        )
+
+        # Restore original functions (to keep data functions available for labeling)
+        if original_functions is not None:
+            ctx.functions = original_functions
+
+        # Inject embedded bytecode (data sections) if present
+        if hasattr(ctx, "embedded_bytecode"):
+            for label_name, bytecode in ctx.embedded_bytecode.items():
+                asm.extend([DataHeader(Label(label_name)), DATA_ITEM(bytecode)])
+        # Program-end label is now appended by Vyper venom assembler when present
         
         # Generate bytecode
         bytecode, _ = generate_bytecode(asm)
@@ -143,14 +151,28 @@ class YulTranspiler:
         # Note: compile_to_venom doesn't take evm_version parameter
         ctx = yul_module.compile_to_venom(ast)
         
-        # Apply optimizations if requested
-        if optimize:
-            from vyper.venom import run_passes_on
-            run_passes_on(ctx, OptimizationLevel.GAS)
+        # Always run passes for structural invariants (filter out data-only functions)
+        from vyper.venom import run_passes_on
+        original_functions = getattr(ctx, "functions", None)
+        if hasattr(ctx, "functions"):
+            ctx.functions = {name: fn for name, fn in ctx.functions.items()
+                             if not getattr(fn, "is_data_section", False)}
+        run_passes_on(ctx, OptimizationLevel.GAS if optimize else OptimizationLevel.NONE)
         
         # Generate assembly
-        asm = generate_assembly_experimental(ctx,
-            OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS)
+        asm = generate_assembly_experimental(
+            ctx, OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS
+        )
+
+        # Restore original functions
+        if original_functions is not None:
+            ctx.functions = original_functions
+
+        # Inject embedded bytecode (data sections) if present
+        if hasattr(ctx, "embedded_bytecode"):
+            for label_name, bytecode in ctx.embedded_bytecode.items():
+                asm.extend([DataHeader(Label(label_name)), DATA_ITEM(bytecode)])
+        # Program-end label is appended by Vyper venom assembler
         
         return str(asm)
     

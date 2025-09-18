@@ -51,7 +51,12 @@ class ExecutionValidator:
         self.evm = EVM()
         # pyrevm has default block environment, we can use it as is
     
-    def deploy_contract(self, bytecode: str, deployer: str = None) -> Tuple[bool, str, bytes]:
+    def deploy_contract(
+        self,
+        bytecode: str,
+        deployer: str = None,
+        constructor_args: bytes = b"",
+    ) -> Tuple[bool, str, bytes]:
         """
         Deploy a contract and return its address.
         
@@ -74,9 +79,11 @@ class ExecutionValidator:
         
         # Deploy the contract
         try:
+            # Append constructor args (standard: appended to initcode)
+            code_bytes = bytes.fromhex(bytecode) + (constructor_args or b"")
             contract_address = self.evm.deploy(
                 deployer=deployer,
-                code=bytes.fromhex(bytecode),
+                code=code_bytes,
                 value=0,
                 gas=5_000_000
             )
@@ -128,10 +135,10 @@ class ExecutionValidator:
             output = self.evm.message_call(
                 caller=caller,
                 to=contract_address,
-                data=calldata,
+                calldata=calldata,
                 value=value,
                 gas=gas_limit,
-                is_static=False
+                is_static=False,
             )
             success = True
         except Exception:
@@ -149,10 +156,13 @@ class ExecutionValidator:
         
         return success, output if output else b"", storage_changes
     
-    def validate_execution(self, 
-                          original_bytecode: str, 
-                          transpiled_bytecode: str,
-                          test_cases: List[TestCase]) -> List[ExecutionReport]:
+    def validate_execution(
+        self,
+        original_bytecode: str,
+        transpiled_bytecode: str,
+        test_cases: List[TestCase],
+        constructor_args: bytes = b"",
+    ) -> List[ExecutionReport]:
         """
         Validate that two bytecodes behave identically.
         
@@ -166,8 +176,10 @@ class ExecutionValidator:
         """
         reports = []
         
-        # Deploy both contracts
-        success1, addr1, deploy_output1 = self.deploy_contract(original_bytecode)
+        # Deploy both contracts in separate EVM instances
+        success1, addr1, deploy_output1 = self.deploy_contract(
+            original_bytecode, constructor_args=constructor_args
+        )
         if not success1:
             reports.append(ExecutionReport(
                 test_name="deployment",
@@ -177,10 +189,14 @@ class ExecutionValidator:
             ))
             return reports
         
-        # Reset EVM state for fair comparison
+        # Keep a handle to the original EVM
+        evm_original = self.evm
+
+        # Use a fresh EVM for the transpiled contract
         self.evm = EVM()
-        
-        success2, addr2, deploy_output2 = self.deploy_contract(transpiled_bytecode)
+        success2, addr2, deploy_output2 = self.deploy_contract(
+            transpiled_bytecode, constructor_args=constructor_args
+        )
         if not success2:
             error_msg = deploy_output2.decode('utf-8', errors='replace') if deploy_output2 else "Unknown error"
             reports.append(ExecutionReport(
@@ -201,12 +217,17 @@ class ExecutionValidator:
             }
         ))
         
-        # Execute test cases on both contracts
+        # Keep a handle to the transpiled EVM
+        evm_transpiled = self.evm
+
+        # Execute test cases on both contracts using their respective EVMs
         for test_case in test_cases:
             # Note: pyrevm doesn't have a direct way to clear storage
             # Each test runs with the accumulated state
             
             # Execute on original
+            # Original
+            self.evm = evm_original
             success1, output1, storage1 = self.execute_call(
                 addr1, 
                 test_case.calldata,
@@ -214,7 +235,8 @@ class ExecutionValidator:
                 gas_limit=test_case.gas_limit
             )
             
-            # Execute on transpiled
+            # Transpiled
+            self.evm = evm_transpiled
             success2, output2, storage2 = self.execute_call(
                 addr2,
                 test_case.calldata,

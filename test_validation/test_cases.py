@@ -212,13 +212,13 @@ def get_simple_test_cases() -> List[TestCase]:
             name="empty_call",
             function_selector=None,
             calldata=b"",
-            expected_revert=False  # May or may not revert depending on fallback
+            expected_revert=True  # Default to revert on empty call (no fallback)
         ),
         TestCase(
             name="invalid_selector",
             function_selector="deadbeef",
             calldata=bytes.fromhex("deadbeef"),
-            expected_revert=False  # May or may not revert depending on fallback
+            expected_revert=True  # Default to revert for unknown selector
         ),
     ]
 

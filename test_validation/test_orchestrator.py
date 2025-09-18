@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from test_validation.runners.solc_compiler import SolcCompiler
 from test_validation.runners.yul_transpiler import YulTranspiler
 from test_validation.validators.execution_validator import ExecutionValidator, ValidationResult
+from eth_abi import encode
 from test_validation.test_cases import get_test_cases_for_contract, get_simple_test_cases
 
 
@@ -183,6 +184,43 @@ class TestOrchestrator:
             )
             print(f"  [OK] Deployment bytecode: {len(deploy_bytecode)} chars")
             print(f"  [OK] Runtime bytecode: {len(runtime_bytecode)} chars")
+
+            # Compute constructor args (default zero values) using solc JSON ABI
+            ctor_args = b""
+            try:
+                solc_json = self.solc_compiler.compile_to_json(test_case.solidity_file)
+                # solc JSON: contracts[filename][contractName]
+                contracts = solc_json.get("contracts", {}).get(test_case.solidity_file.name, {})
+                # Prefer first contract entry (test files contain one contract)
+                for _name, item in contracts.items():
+                    abi = item.get("abi", [])
+                    ctor = next((e for e in abi if e.get("type") == "constructor"), None)
+                    if ctor is None or not ctor.get("inputs"):
+                        break
+                    types = [inp["type"] for inp in ctor["inputs"]]
+                    # Provide zero-like defaults per type
+                    def _default_for(t: str):
+                        if t.startswith("uint") or t.startswith("int"):
+                            return 0
+                        if t == "address":
+                            return b"\x00" * 20
+                        if t == "bool":
+                            return False
+                        if t == "bytes" or t.startswith("bytes"):
+                            # static bytesN: encode_abi expects bytes
+                            return b"\x00" * (int(t[5:]) if t.startswith("bytes") and len(t) > 5 else 0)
+                        if t == "string":
+                            return ""
+                        if t.endswith("[]"):
+                            return []
+                        # Fallback: zero
+                        return 0
+                    values = [_default_for(t) for t in types]
+                    ctor_args = encode(types, values)
+                    break
+            except Exception:
+                # If ABI encoding fails, continue with empty args
+                ctor_args = b""
             
             # Step 3: Transpile Yul to Venom IR
             print("\n[3/5] Transpiling Yul to Venom IR...")
@@ -211,7 +249,8 @@ class TestOrchestrator:
             validation_reports = self.execution_validator.validate_execution(
                 deploy_bytecode, 
                 transpiled_bytecode,
-                test_cases
+                test_cases,
+                constructor_args=ctor_args,
             )
             
             # Print validation results

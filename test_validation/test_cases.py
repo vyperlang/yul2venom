@@ -4,8 +4,18 @@ Test case definitions for contract execution validation.
 """
 
 from typing import Dict, List, Any
-from test_validation.validators.execution_validator import TestCase, create_function_calldata
+from eth_abi import encode
 from eth_utils import function_signature_to_4byte_selector
+
+from test_validation.validators.execution_validator import (
+    TestCase,
+    create_function_calldata,
+)
+
+
+def _normalize_contract_name(name: str) -> str:
+    """Normalize contract identifiers so orchestrator lookups succeed."""
+    return "".join(ch for ch in name if ch.isalnum()).lower()
 
 
 def get_test_cases_for_contract(contract_name: str) -> List[TestCase]:
@@ -18,12 +28,120 @@ def get_test_cases_for_contract(contract_name: str) -> List[TestCase]:
     Returns:
         List of test cases
     """
-    test_cases = TEST_CASES.get(contract_name, [])
-    return test_cases
+    normalized = _normalize_contract_name(contract_name)
+    if contract_name in TEST_CASES:
+        return TEST_CASES[contract_name]
+    return NORMALIZED_TEST_CASES.get(normalized, [])
 
 
 # Define test cases for each contract type
+DEFAULT_CALLER = "0x2000000000000000000000000000000000000002"
+
+
 TEST_CASES = {
+    "AdvancedFeatures": [
+        TestCase(
+            name="deposit_amount_5",
+            function_selector=function_signature_to_4byte_selector(
+                "deposit(uint256)"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("deposit(uint256)").hex(),
+                5,
+            ),
+        ),
+        TestCase(
+            name="deposit_amount_7",
+            function_selector=function_signature_to_4byte_selector(
+                "deposit(uint256)"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("deposit(uint256)").hex(),
+                7,
+            ),
+        ),
+        TestCase(
+            name="get_user_after_deposits",
+            function_selector=function_signature_to_4byte_selector(
+                "getUser(address)"
+            ).hex(),
+            calldata=function_signature_to_4byte_selector("getUser(address)")
+            + encode(["address"], [DEFAULT_CALLER]),
+            expected_return=encode(["uint256", "uint256"], [12, 2]),
+        ),
+        TestCase(
+            name="history_sum_after_deposits",
+            function_selector=function_signature_to_4byte_selector(
+                "historySum()"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("historySum()").hex()
+            ),
+            expected_return=encode(["uint256"], [12]),
+        ),
+        TestCase(
+            name="history_average_after_deposits",
+            function_selector=function_signature_to_4byte_selector(
+                "historyAverage()"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("historyAverage()").hex()
+            ),
+            expected_return=encode(["uint256"], [6]),
+        ),
+        TestCase(
+            name="withdraw_amount_4",
+            function_selector=function_signature_to_4byte_selector(
+                "withdraw(uint256)"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("withdraw(uint256)").hex(),
+                4,
+            ),
+        ),
+        TestCase(
+            name="get_user_after_withdraw",
+            function_selector=function_signature_to_4byte_selector(
+                "getUser(address)"
+            ).hex(),
+            calldata=function_signature_to_4byte_selector("getUser(address)")
+            + encode(["address"], [DEFAULT_CALLER]),
+            expected_return=encode(["uint256", "uint256"], [8, 3]),
+        ),
+        TestCase(
+            name="history_sum_after_withdraw",
+            function_selector=function_signature_to_4byte_selector(
+                "historySum()"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("historySum()").hex()
+            ),
+            expected_return=encode(["uint256"], [12]),
+        ),
+        TestCase(
+            name="factorial_six",
+            function_selector=function_signature_to_4byte_selector(
+                "factorial(uint256)"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("factorial(uint256)").hex(),
+                6,
+            ),
+            expected_return=encode(["uint256"], [720]),
+        ),
+        TestCase(
+            name="fib_seven",
+            function_selector=function_signature_to_4byte_selector(
+                "fib(uint256)"
+            ).hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("fib(uint256)").hex(),
+                7,
+            ),
+            expected_return=encode(["uint256"], [13]),
+        ),
+    ],
+
     "SimpleStorage": [
         TestCase(
             name="store_42",
@@ -103,20 +221,28 @@ TEST_CASES = {
     
     "BasicMath": [
         TestCase(
+            name="set_value_123",
+            function_selector=function_signature_to_4byte_selector("setValue(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("setValue(uint256)").hex(),
+                123
+            ),
+            expected_storage={0: 123}
+        ),
+        TestCase(
+            name="get_value_after_set",
+            function_selector=function_signature_to_4byte_selector("getValue()").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("getValue()").hex()
+            ),
+            expected_return=(123).to_bytes(32, byteorder='big')
+        ),
+        TestCase(
             name="add_10_20",
             function_selector=function_signature_to_4byte_selector("add(uint256,uint256)").hex(),
             calldata=create_function_calldata(
                 function_signature_to_4byte_selector("add(uint256,uint256)").hex(),
                 10, 20
-            ),
-            expected_return=(30).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="subtract_50_20",
-            function_selector=function_signature_to_4byte_selector("subtract(uint256,uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("subtract(uint256,uint256)").hex(),
-                50, 20
             ),
             expected_return=(30).to_bytes(32, byteorder='big')
         ),
@@ -129,73 +255,78 @@ TEST_CASES = {
             ),
             expected_return=(42).to_bytes(32, byteorder='big')
         ),
-        TestCase(
-            name="divide_100_5",
-            function_selector=function_signature_to_4byte_selector("divide(uint256,uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("divide(uint256,uint256)").hex(),
-                100, 5
-            ),
-            expected_return=(20).to_bytes(32, byteorder='big')
-        ),
     ],
     
     "ControlFlow": [
         TestCase(
-            name="max_10_5",
-            function_selector=function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
+            name="for_loop_sum_5",
+            function_selector=function_signature_to_4byte_selector("forLoopSum(uint256)").hex(),
             calldata=create_function_calldata(
-                function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
-                10, 5
-            ),
-            expected_return=(10).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="max_3_8",
-            function_selector=function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
-                3, 8
-            ),
-            expected_return=(8).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="max_equal",
-            function_selector=function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("max(uint256,uint256)").hex(),
-                7, 7
-            ),
-            expected_return=(7).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="fibonacci_0",
-            function_selector=function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
-                0
-            ),
-            expected_return=(0).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="fibonacci_1",
-            function_selector=function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
-                1
-            ),
-            expected_return=(1).to_bytes(32, byteorder='big')
-        ),
-        TestCase(
-            name="fibonacci_5",
-            function_selector=function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
-            calldata=create_function_calldata(
-                function_signature_to_4byte_selector("fibonacci(uint256)").hex(),
+                function_signature_to_4byte_selector("forLoopSum(uint256)").hex(),
                 5
             ),
-            expected_return=(5).to_bytes(32, byteorder='big')
+            expected_return=(15).to_bytes(32, byteorder='big')
+        ),
+        TestCase(
+            name="while_factorial_5",
+            function_selector=function_signature_to_4byte_selector("whileLoopFactorial(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("whileLoopFactorial(uint256)").hex(),
+                5
+            ),
+            expected_return=(120).to_bytes(32, byteorder='big')
+        ),
+        TestCase(
+            name="require_test_valid",
+            function_selector=function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+                10
+            ),
+            expected_return=(20).to_bytes(32, byteorder='big')
+        ),
+        TestCase(
+            name="require_test_zero_reverts",
+            function_selector=function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+                0
+            ),
+            expected_revert=True
+        ),
+        TestCase(
+            name="require_test_large_reverts",
+            function_selector=function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("requireTest(uint256)").hex(),
+                5000
+            ),
+            expected_revert=True
+        ),
+        TestCase(
+            name="nested_loops_3",
+            function_selector=function_signature_to_4byte_selector("nestedLoops(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("nestedLoops(uint256)").hex(),
+                3
+            ),
+            expected_return=(9).to_bytes(32, byteorder='big')
+        ),
+        TestCase(
+            name="assert_test_10",
+            function_selector=function_signature_to_4byte_selector("assertTest(uint256)").hex(),
+            calldata=create_function_calldata(
+                function_signature_to_4byte_selector("assertTest(uint256)").hex(),
+                10
+            ),
+            expected_return=(20).to_bytes(32, byteorder='big')
         ),
     ],
+}
+
+
+NORMALIZED_TEST_CASES = {
+    _normalize_contract_name(name): cases for name, cases in TEST_CASES.items()
 }
 
 

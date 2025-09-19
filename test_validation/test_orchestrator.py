@@ -103,6 +103,12 @@ class TestOrchestrator:
                 "tags": ["math", "simple", "basic"]
             },
             {
+                "file": "AdvancedFeatures.sol",
+                "name": "AdvancedFeatures",
+                "description": "Test advanced storage + control flow",
+                "tags": ["storage", "loops", "advanced"]
+            },
+            {
                 "file": "SimpleStorage.sol",
                 "name": "simple_storage",
                 "description": "Test basic storage operations",

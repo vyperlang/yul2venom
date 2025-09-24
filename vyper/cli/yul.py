@@ -88,9 +88,78 @@ def _parse_args(argv: list[str]):
 
     tree = yul_parser.parse(yul_source)
     ast = YulTransformer().transform(tree)
-    if isinstance(ast, list) and len(ast) > 0:
-        ast = ast[0]
-    ctx = compile_to_venom(ast)
+
+    # Handle multiple top-level objects
+    objects_to_compile = []
+    if isinstance(ast, list):
+        if len(ast) == 0:
+            print("Error: No valid Yul objects found")
+            sys.exit(1)
+        objects_to_compile = ast
+    else:
+        objects_to_compile = [ast]
+
+    # For multiple objects, compile each and concatenate output
+    if len(objects_to_compile) > 1:
+        all_outputs = []
+        for i, obj in enumerate(objects_to_compile):
+            ctx = compile_to_venom(obj)
+
+            if args.venom:
+                if i > 0:
+                    all_outputs.append(f"\n# === Object {i+1}: {obj.name} ===\n")
+                all_outputs.append(str(ctx))
+            else:
+                # For bytecode/asm, we need to handle them individually
+                # Store for later processing
+                all_outputs.append((obj, ctx))
+
+        if args.venom:
+            print(''.join(all_outputs))
+            return
+
+        # For bytecode/asm output with multiple objects
+        all_bytecode = []
+        all_asm = []
+
+        for obj, ctx in all_outputs:
+            # Filter out data functions before optimization
+            original_functions = ctx.functions.copy()
+            ctx.functions = {name: fn for name, fn in ctx.functions.items()
+                           if not getattr(fn, 'is_data_section', False)}
+
+            # Run full optimization pipeline
+            from vyper.venom import run_passes_on
+            from vyper.compiler.settings import OptimizationLevel
+            run_passes_on(ctx, OptimizationLevel.default())
+
+            asm = generate_assembly_experimental(ctx)
+            # Restore original functions
+            ctx.functions = original_functions
+            # Handle embedded bytecode and append program end label if present
+            embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+            program_end_label_name = getattr(ctx, "program_end_label_name", None)
+            asm = inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
+
+            if args.asm:
+                all_asm.append(asm)
+            else:
+                bytecode, _ = generate_bytecode(asm)
+                all_bytecode.append(bytecode)
+
+        if args.asm:
+            for i, asm in enumerate(all_asm):
+                if i > 0:
+                    print(f"\n# === Object {i+1} ===\n")
+                print(asm)
+        else:
+            # Concatenate all bytecodes
+            combined_bytecode = b''.join(all_bytecode)
+            print(f"0x{combined_bytecode.hex()}")
+        return
+
+    # Single object case (original code path)
+    ctx = compile_to_venom(objects_to_compile[0])
 
     # check_venom_ctx(ctx)  # Skip check for now to see output
 
@@ -125,12 +194,12 @@ def _parse_args(argv: list[str]):
     # Run full optimization passes
     from vyper.venom import run_passes_on
     from vyper.compiler.settings import OptimizationLevel
-    
+
     # Filter out data functions before optimization
     original_functions = ctx.functions.copy()
-    ctx.functions = {name: fn for name, fn in ctx.functions.items() 
+    ctx.functions = {name: fn for name, fn in ctx.functions.items()
                      if not getattr(fn, 'is_data_section', False)}
-    
+
     # Run full optimization pipeline
     run_passes_on(ctx, OptimizationLevel.default())
     
@@ -494,6 +563,8 @@ class YulToVenom:
         self.program_end_label: IRLabel | None = None
         self._data_labels_in_order: list[str] = []
         self._data_sizes: dict[str, int] = {}
+        self.immutable_offsets: dict[str, int] = {}  # Map immutable keys to offsets
+        self.next_immutable_offset = 0
 
     def compile(self, ast_node: YulObject) -> IRContext:
         """
@@ -501,6 +572,9 @@ class YulToVenom:
         """
         # Remember object name for handling datasize("<object>")
         self.object_name = ast_node.name
+
+        # Set up constants for immutable handling (god help us all)
+        self.ctx.constants["mem_deploy_end"] = 0  # For now, immutables start at 0
         # Predeclare end label symbol for datasize calculation; define later
         self.program_end_label = IRLabel(f"{self.object_name}_end", True)
         # First, compile all nested objects to bytecode
@@ -509,13 +583,19 @@ class YulToVenom:
                 # Compile the nested object as a completely independent module
                 # This is exactly like compiling a standalone Yul file
                 nested_compiler = YulToVenom()
+                # Share the immutable offsets with nested compiler
+                nested_compiler.immutable_offsets = self.immutable_offsets.copy()
+                nested_compiler.next_immutable_offset = self.next_immutable_offset
                 nested_ctx = nested_compiler.compile(item)
+                # Update our immutable offsets from nested compilation
+                self.immutable_offsets.update(nested_compiler.immutable_offsets)
+                self.next_immutable_offset = max(self.next_immutable_offset, nested_compiler.next_immutable_offset)
                 
                 # Run full optimization passes on the nested context
                 from vyper.venom import run_passes_on
                 from vyper.compiler.settings import OptimizationLevel
-                
-                # Use default optimization level - runs all passes
+
+                # Run full optimization including all essential passes
                 run_passes_on(nested_ctx, OptimizationLevel.default())
                 
                 # Generate assembly and bytecode with full optimization
@@ -739,10 +819,11 @@ class YulToVenom:
         fdef = self.current_fdef
         fn = self.function
         bb = fn.get_basic_block()
-        
-        # Return with the return values
-        return_args = [IRVariable(s) for s in fdef.returns]
-        bb.append_instruction("ret", *return_args, self.return_pc)
+
+        if not bb.is_terminated:
+            # Return with the return values
+            return_args = [IRVariable(s) for s in fdef.returns]
+            bb.append_instruction("ret", *return_args, self.return_pc)
 
     def _compile_block(self, block: Block, fn: IRFunction) -> None:
         for stmt in block.statements:
@@ -786,6 +867,10 @@ class YulToVenom:
                             bb.append_instruction("assign", val[0] if val else IRLiteral(0), ret=IRVariable(stmt.names[0]))
                         else:
                             bb.append_instruction("assign", val, ret=IRVariable(stmt.names[0]))
+            else:
+                # uninitialized variables default to 0 in Yul
+                for name in stmt.names:
+                    bb.append_instruction("assign", IRLiteral(0), ret=IRVariable(name))
 
         elif isinstance(stmt, Assign):
             val = self._compile_expr(stmt.value, bb)
@@ -923,6 +1008,10 @@ class YulToVenom:
 
         elif isinstance(stmt, Block):
             self._compile_block(stmt, fn)
+
+        elif isinstance(stmt, FunctionDef):
+            # Handle nested function definitions!
+            self._compile_function(stmt)
 
         else:
             raise NotImplementedError(f"Statement {type(stmt)} not implemented: {stmt}")
@@ -1080,6 +1169,15 @@ class YulToVenom:
                         return IRLiteral(0)
                     return IRLiteral(0)
                 
+                # Handle immutable operations
+                # For now, treat these as no-ops/placeholders since proper immutable
+                # handling requires more infrastructure
+                elif expr.name == "setimmutable":
+                    return IRLiteral(0)
+
+                elif expr.name == "loadimmutable":
+                    return IRLiteral(0)
+
                 # regular evm instruction
                 # special mappings: log1, log2.. -> log 1, log 2, ...
                 opcode = expr.name

@@ -1178,6 +1178,21 @@ class YulToVenom:
                 elif expr.name == "loadimmutable":
                     return IRLiteral(0)
 
+                elif expr.name == "linkersymbol":
+                    if len(expr.args) != 1:
+                        raise Exception(f"linkersymbol expects 1 argument, got {len(expr.args)}")
+
+                    arg_expr = expr.args[0]
+                    if not isinstance(arg_expr, Literal) or not isinstance(arg_expr.value, str):
+                        raise Exception(f"linkersymbol expects a string literal, got {arg_expr}")
+
+                    # For now, return a placeholder address literal
+                    # In actual bytecode, this would be something like 
+                    # keccak256(library_name)[2:36] 
+                    # The linker would replace this with the actual address
+                    # which I currently have no idea how to go about implementing
+                    return IRLiteral(0)
+
                 # regular evm instruction
                 # special mappings: log1, log2.. -> log 1, log 2, ...
                 opcode = expr.name

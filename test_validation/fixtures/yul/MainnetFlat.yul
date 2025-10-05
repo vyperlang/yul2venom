@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "AddressDerivation_5739" {
     code {
@@ -126,6 +127,7 @@ object "BalanceDeltaLibrary_0_7258" {
     }
 
 }
+
 
 
 
@@ -278,7 +280,6 @@ object "BalanceDeltaLibrary_1_11246" {
 
 
 
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "CalldataDecoder_16645" {
     code {
@@ -410,6 +411,7 @@ object "CreditDebt_6115" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "DecimalMath_8031" {
     code {
@@ -475,6 +477,7 @@ object "DecimalMath_8031" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Decoder_6971" {
     code {
@@ -537,6 +540,7 @@ object "Decoder_6971" {
     }
 
 }
+
 
 
 
@@ -606,9 +610,6 @@ object "DodoMath_8319" {
 
 
 
-
-
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Encoder_6588" {
     code {
@@ -671,6 +672,7 @@ object "Encoder_6588" {
     }
 
 }
+
 
 
 
@@ -739,6 +741,7 @@ object "FastDodoV1_7899" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "FastDodoV2_8918" {
     code {
@@ -804,6 +807,7 @@ object "FastDodoV2_8918" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "FastLogic_343" {
     code {
@@ -866,6 +870,7 @@ object "FastLogic_343" {
     }
 
 }
+
 
 
 
@@ -1001,33 +1006,6 @@ object "FullMath_5920" {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Lib512MathAccessors_2018" {
     code {
@@ -1090,6 +1068,7 @@ object "Lib512MathAccessors_2018" {
     }
 
 }
+
 
 
 
@@ -1158,6 +1137,7 @@ object "Lib512MathArithmetic_5185" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Lib512MathComparisons_2311" {
     code {
@@ -1223,6 +1203,7 @@ object "Lib512MathComparisons_2311" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Lib512MathExternal_5477" {
     code {
@@ -1285,6 +1266,7 @@ object "Lib512MathExternal_5477" {
     }
 
 }
+
 
 
 
@@ -22438,6 +22420,7 @@ object "Math_0_1238" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Math_1_7945" {
     code {
@@ -22636,11 +22619,6 @@ object "Panic_391" {
 
 
 
-
-
-
-
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Revert_415" {
     code {
@@ -22773,8 +22751,6 @@ object "SafeTransferLib_1347" {
 
 
 
-
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "StateLib_6400" {
     code {
@@ -22837,6 +22813,7 @@ object "StateLib_6400" {
     }
 
 }
+
 
 
 
@@ -22905,6 +22882,7 @@ object "Take_7146" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "Ternary_1032" {
     code {
@@ -22967,6 +22945,7 @@ object "Ternary_1032" {
     }
 
 }
+
 
 
 
@@ -23036,8 +23015,6 @@ object "TransientStorage_15804" {
 
 
 
-
-
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "UnsafeEkuboCore_14094" {
     code {
@@ -23100,6 +23077,7 @@ object "UnsafeEkuboCore_14094" {
     }
 
 }
+
 
 
 
@@ -23168,6 +23146,7 @@ object "UnsafeMath_1191" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "UnsafePancakeInfinityBinPoolManager_11480" {
     code {
@@ -23230,6 +23209,7 @@ object "UnsafePancakeInfinityBinPoolManager_11480" {
     }
 
 }
+
 
 
 
@@ -23298,6 +23278,7 @@ object "UnsafePancakeInfinityPoolManager_11459" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "UnsafePancakeInfinityVault_11439" {
     code {
@@ -23360,6 +23341,7 @@ object "UnsafePancakeInfinityVault_11439" {
     }
 
 }
+
 
 
 
@@ -23428,6 +23410,7 @@ object "UnsafePoolManager_7394" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetFlat.sol"
 object "UnsafeVault_13197" {
     code {
@@ -23490,3 +23473,4 @@ object "UnsafeVault_13197" {
     }
 
 }
+

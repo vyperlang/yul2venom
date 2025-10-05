@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/Arithmetic.sol"
 object "Arithmetic_165" {
     code {
@@ -745,3 +746,4 @@ object "Arithmetic_165" {
     }
 
 }
+

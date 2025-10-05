@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/SimpleStorage.sol"
 object "SimpleStorage_75" {
     code {
@@ -539,3 +540,4 @@ object "SimpleStorage_75" {
     }
 
 }
+

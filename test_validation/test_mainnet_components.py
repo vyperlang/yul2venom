@@ -12,7 +12,8 @@ def compile_component_to_yul(contract_name="SimpleStorage"):
 
     cmd = [
         "solc",
-        "--ir",
+        "--ir-optimized",
+        "--via-ir",
         "--optimize",
         str(sol_file)
     ]
@@ -24,12 +25,12 @@ def compile_component_to_yul(contract_name="SimpleStorage"):
 
     # Extract the specific contract's Yul
     import re
-    pattern = rf'object\s+"{contract_name}_\d+"\s*\{{.*?(?=object\s+"|IR:|\Z)'
+    pattern = rf'object\s+"{contract_name}_\d+"\s*\{{.*?(?=object\s+"|IR:|Optimized IR:|\Z)'
     match = re.search(pattern, result.stdout, re.DOTALL)
 
     if not match:
         # Try without the _number suffix
-        pattern = rf'object\s+"{contract_name}"\s*\{{.*?(?=object\s+"|IR:|\Z)'
+        pattern = rf'object\s+"{contract_name}"\s*\{{.*?(?=object\s+"|IR:|Optimized IR:|\Z)'
         match = re.search(pattern, result.stdout, re.DOTALL)
 
     if match:

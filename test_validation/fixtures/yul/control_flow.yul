@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/ControlFlow.sol"
 object "ControlFlow_270" {
     code {
@@ -1319,3 +1320,4 @@ object "ControlFlow_270" {
     }
 
 }
+

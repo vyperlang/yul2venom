@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/AdvancedFeatures.sol"
 object "AdvancedFeatures_256" {
     code {
@@ -1103,3 +1104,4 @@ object "AdvancedFeatures_256" {
     }
 
 }
+

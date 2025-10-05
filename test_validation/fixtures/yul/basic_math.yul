@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/BasicMath.sol"
 object "BasicMath_50" {
     code {
@@ -424,3 +425,4 @@ object "BasicMath_50" {
     }
 
 }
+

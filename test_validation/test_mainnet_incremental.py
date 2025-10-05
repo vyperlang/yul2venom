@@ -31,7 +31,7 @@ def get_simple_libraries():
     if not yul_file.exists():
         # Generate it first
         sol_file = Path(__file__).parent / "fixtures" / "solidity" / "MainnetFlat.sol"
-        cmd = ["solc", "--ir", "--optimize", str(sol_file)]
+        cmd = ["solc", "--ir-optimized", "--via-ir", "--optimize", str(sol_file)]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:

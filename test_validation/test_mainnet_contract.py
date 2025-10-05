@@ -18,7 +18,8 @@ def test_mainnet_flat_compiles_to_yul():
     # Try to compile to Yul
     cmd = [
         "solc",
-        "--ir",
+        "--ir-optimized",
+        "--via-ir",
         "--optimize",
         str(sol_file)
     ]

@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetComponents.sol"
 object "ABIPatterns_360" {
     code {
@@ -645,6 +646,7 @@ object "ABIPatterns_360" {
     }
 
 }
+
 
 
 
@@ -1399,6 +1401,7 @@ object "ControlFlowPatterns_679" {
     }
 
 }
+
 
 
 
@@ -2680,6 +2683,7 @@ object "MathOperations_304" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetComponents.sol"
 object "MemoryPatterns_545" {
     code {
@@ -3433,6 +3437,7 @@ object "MemoryPatterns_545" {
 
 
 
+
 /// @use-src 0:"test_validation/fixtures/solidity/MainnetComponents.sol"
 object "SafeMath_104" {
     code {
@@ -3495,6 +3500,7 @@ object "SafeMath_104" {
     }
 
 }
+
 
 
 
@@ -4147,3 +4153,4 @@ object "SimpleStorage_224" {
     }
 
 }
+

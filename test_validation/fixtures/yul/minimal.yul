@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/Minimal.sol"
 object "Minimal_5" {
     code {
@@ -187,3 +188,4 @@ object "Minimal_5" {
     }
 
 }
+

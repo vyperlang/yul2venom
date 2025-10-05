@@ -175,7 +175,7 @@ class RevmEnvironment:
             output = self.evm.message_call(
                 caller=caller_addr,
                 to=contract_address,
-                data=calldata,
+                calldata=calldata,
                 value=value,
                 gas=1_000_000,
                 is_static=False

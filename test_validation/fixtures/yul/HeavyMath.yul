@@ -1,3 +1,4 @@
+
 /// @use-src 0:"test_validation/fixtures/solidity/HeavyMath.sol"
 object "HeavyMath_367" {
     code {
@@ -1055,3 +1056,4 @@ object "HeavyMath_367" {
     }
 
 }
+

@@ -7,7 +7,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class SolcCompiler:
@@ -56,7 +56,7 @@ class SolcCompiler:
 
         cmd = [
             self.solc_path,
-            "--ir-optimized",  # Output optimized Yul IR
+            "--ir-optimized" if optimize else "--ir",
             "--via-ir",  # Use IR pipeline to avoid stack too deep errors
             "--no-color",
             str(solidity_file)
@@ -98,41 +98,40 @@ class SolcCompiler:
         # Get contract name from file
         contract_name = solidity_file.stem
         
-        cmd = [
-            self.solc_path,
-            "--bin",
-            "--bin-runtime",
-            "--via-ir",  # Use IR pipeline to avoid stack too deep errors
-            "--no-color",
-            str(solidity_file)
-        ]
+        solc_json = self.compile_to_json(solidity_file, optimize=optimize)
+        contracts = solc_json.get("contracts", {}).get(solidity_file.name, {})
 
-        if optimize:
-            cmd.extend(["--optimize", "--optimize-runs", "200"])
-        
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse bytecode from output
-            deployment_bytecode = ""
-            runtime_bytecode = ""
-            
-            lines = result.stdout.split('\n')
-            for i, line in enumerate(lines):
-                if "Binary:" in line and i + 1 < len(lines):
-                    deployment_bytecode = lines[i + 1].strip()
-                elif "Binary of the runtime part:" in line and i + 1 < len(lines):
-                    runtime_bytecode = lines[i + 1].strip()
-            
-            return deployment_bytecode, runtime_bytecode
-            
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Compilation failed: {e.stderr}")
+        def _extract_bytecode(entry: Dict[str, Any]) -> Tuple[str, str]:
+            evm = entry.get("evm", {}) if entry else {}
+            bytecode = evm.get("bytecode", {}).get("object") or ""
+            runtime = evm.get("deployedBytecode", {}).get("object") or ""
+            return bytecode, runtime
+
+        candidates: List[Tuple[str, str, str]] = []
+        for name, entry in contracts.items():
+            bytecode, runtime = _extract_bytecode(entry)
+            candidates.append((name, bytecode, runtime))
+
+        # Filter to contracts with actual bytecode to avoid abstract/interfaces.
+        non_empty = [item for item in candidates if item[1] or item[2]]
+        if not non_empty:
+            return "", ""
+
+        # Prefer a contract whose name matches the file stem (case-insensitive).
+        target = solidity_file.stem.lower()
+        for name, bytecode, runtime in non_empty:
+            if name == solidity_file.stem and (bytecode or runtime):
+                return bytecode, runtime
+        for name, bytecode, runtime in non_empty:
+            if name.lower() == target:
+                return bytecode, runtime
+
+        # Fall back to the contract with the largest deployed bytecode (or creation).
+        name, bytecode, runtime = max(
+            non_empty,
+            key=lambda item: max(len(item[2]), len(item[1]))
+        )
+        return bytecode, runtime
     
     def compile_to_json(self, solidity_file: Path, optimize: bool = False) -> Dict:
         """

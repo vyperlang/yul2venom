@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
 """
-Solc compiler wrapper for compiling Solidity contracts to Yul.
+Solc compiler wrapper for compiling Solidity contracts to Yul
 """
+
+from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+
+@dataclass(frozen=True)
+class ContractArtifact:
+    """Container for per-contract compilation outputs from solc."""
+
+    fully_qualified_name: str
+    contract_name: str
+    source_path: str
+    bytecode: str
+    runtime_bytecode: str
+    link_references: Dict[str, List[Tuple[int, int]]]
+    abi: Optional[List[Dict[str, Any]]] = None
+
+    @property
+    def dependencies(self) -> List[str]:
+        return sorted(self.link_references)
 
 
 class SolcCompiler:
@@ -82,56 +101,75 @@ class SolcCompiler:
             raise RuntimeError(f"Compilation failed: {e.stderr}")
     
     def compile_to_bytecode(self, solidity_file: Path, optimize: bool = False) -> Tuple[str, str]:
+        artifacts = self.compile_contract_artifacts(solidity_file, optimize=optimize)
+
+        if not artifacts:
+            return "", ""
+
+        target_name = solidity_file.stem.lower()
+        preferred: Optional[ContractArtifact] = None
+        fallback: Optional[ContractArtifact] = None
+
+        for artifact in artifacts.values():
+            name_match = artifact.contract_name == solidity_file.stem
+            case_insensitive_match = artifact.contract_name.lower() == target_name
+            has_code = bool(self._strip_0x(artifact.bytecode) or self._strip_0x(artifact.runtime_bytecode))
+
+            if not has_code:
+                continue
+
+            if name_match:
+                preferred = artifact
+                break
+
+            if case_insensitive_match and fallback is None:
+                fallback = artifact
+
+            if fallback is None:
+                fallback = artifact
+
+        selected = preferred or fallback
+        if selected is None:
+            return "", ""
+
+        return selected.bytecode, selected.runtime_bytecode
+
+    def compile_contract_artifacts(
+        self, solidity_file: Path, optimize: bool = False
+    ) -> Dict[str, ContractArtifact]:
+        """Returns a mapping keyed by fully-qualified contract name in the form
+        ``<filename>:<contract>``.
         """
-        Compile a Solidity file to bytecode (for comparison).
-        
-        Args:
-            solidity_file: Path to the Solidity source file
-            optimize: Whether to enable optimizer
-        
-        Returns:
-            Tuple of (deployment_bytecode, runtime_bytecode)
-        """
+
         if not solidity_file.exists():
             raise FileNotFoundError(f"Solidity file not found: {solidity_file}")
-        
-        # Get contract name from file
-        contract_name = solidity_file.stem
-        
+
         solc_json = self.compile_to_json(solidity_file, optimize=optimize)
         contracts = solc_json.get("contracts", {}).get(solidity_file.name, {})
 
-        def _extract_bytecode(entry: Dict[str, Any]) -> Tuple[str, str]:
-            evm = entry.get("evm", {}) if entry else {}
-            bytecode = evm.get("bytecode", {}).get("object") or ""
-            runtime = evm.get("deployedBytecode", {}).get("object") or ""
-            return bytecode, runtime
-
-        candidates: List[Tuple[str, str, str]] = []
+        artifacts: Dict[str, ContractArtifact] = {}
         for name, entry in contracts.items():
-            bytecode, runtime = _extract_bytecode(entry)
-            candidates.append((name, bytecode, runtime))
+            fq_name = f"{solidity_file.name}:{name}"
+            evm: Dict[str, Any] = entry.get("evm", {}) if entry else {}
+            bytecode_info: Dict[str, Any] = evm.get("bytecode", {}) if evm else {}
+            runtime_info: Dict[str, Any] = evm.get("deployedBytecode", {}) if evm else {}
 
-        # Filter to contracts with actual bytecode to avoid abstract/interfaces.
-        non_empty = [item for item in candidates if item[1] or item[2]]
-        if not non_empty:
-            return "", ""
+            bytecode_obj = bytecode_info.get("object") or ""
+            runtime_obj = runtime_info.get("object") or ""
 
-        # Prefer a contract whose name matches the file stem (case-insensitive).
-        target = solidity_file.stem.lower()
-        for name, bytecode, runtime in non_empty:
-            if name == solidity_file.stem and (bytecode or runtime):
-                return bytecode, runtime
-        for name, bytecode, runtime in non_empty:
-            if name.lower() == target:
-                return bytecode, runtime
+            link_refs = self._parse_link_references(bytecode_info.get("linkReferences", {}))
 
-        # Fall back to the contract with the largest deployed bytecode (or creation).
-        name, bytecode, runtime = max(
-            non_empty,
-            key=lambda item: max(len(item[2]), len(item[1]))
-        )
-        return bytecode, runtime
+            artifacts[fq_name] = ContractArtifact(
+                fully_qualified_name=fq_name,
+                contract_name=name,
+                source_path=solidity_file.name,
+                bytecode=self._ensure_hex_prefix(bytecode_obj),
+                runtime_bytecode=self._ensure_hex_prefix(runtime_obj),
+                link_references=link_refs,
+                abi=entry.get("abi"),
+            )
+
+        return artifacts
     
     def compile_to_json(self, solidity_file: Path, optimize: bool = False) -> Dict:
         """
@@ -232,6 +270,71 @@ class SolcCompiler:
     def get_version(self) -> str:
         """Get the solc version."""
         return self.version
+
+    @staticmethod
+    def _ensure_hex_prefix(value: str) -> str:
+        value = value or ""
+        return value if not value or value.startswith("0x") else f"0x{value}"
+
+    @staticmethod
+    def _strip_0x(value: str) -> str:
+        return value[2:] if value.startswith("0x") else value
+
+    @staticmethod
+    def _parse_link_references(raw: Mapping[str, Mapping[str, List[Dict[str, int]]]]) -> Dict[str, List[Tuple[int, int]]]:
+        link_refs: Dict[str, List[Tuple[int, int]]] = {}
+        for file_path, contracts in (raw or {}).items():
+            for contract_name, positions in contracts.items():
+                fq_name = f"{file_path}:{contract_name}"
+                link_refs.setdefault(fq_name, [])
+                for position in positions:
+                    start = position.get("start")
+                    length = position.get("length")
+                    if start is None or length is None:
+                        continue
+                    link_refs[fq_name].append((start, length))
+
+        return link_refs
+
+    def link_bytecode(
+        self,
+        artifact: ContractArtifact,
+        library_addresses: Mapping[str, str],
+    ) -> str:
+        """Link a contract's creation bytecode using deployed library addresses."""
+
+        if not artifact.link_references:
+            return artifact.bytecode
+
+        bytecode = self._strip_0x(artifact.bytecode)
+        if not bytecode:
+            return artifact.bytecode
+
+        bytecode_chars = list(bytecode)
+
+        for reference, positions in artifact.link_references.items():
+            if reference not in library_addresses:
+                raise ValueError(
+                    f"Missing address for library '{reference}' required by {artifact.fully_qualified_name}"
+                )
+
+            address_hex = self._strip_0x(library_addresses[reference]).lower()
+            expected_length = positions[0][1] if positions else 20
+
+            if len(address_hex) > expected_length * 2:
+                raise ValueError(
+                    f"Address {library_addresses[reference]} is too long for reference '{reference}'"
+                )
+
+            address_hex = address_hex.rjust(expected_length * 2, "0")
+
+            for start, length in sorted(positions):
+                start_index = start * 2
+                end_index = start_index + length * 2
+                bytecode_chars[start_index:end_index] = list(address_hex)
+
+        linked = "".join(bytecode_chars)
+        return self._ensure_hex_prefix(linked)
 
 
 def main():

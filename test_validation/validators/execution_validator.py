@@ -4,7 +4,7 @@ Execution-based validation framework for comparing Solidity and Yul-transpiled b
 Uses pyrevm to execute bytecode and compare actual behavior rather than superficial properties.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -42,6 +42,19 @@ class TestCase:
     expected_storage: Optional[Dict[int, int]] = None  # Expected storage changes
     expected_revert: bool = False  # Whether call should revert
     gas_limit: int = 1_000_000  # Gas limit for execution
+
+
+TestCase.__test__ = False
+
+
+@dataclass
+class DeploymentStep:
+    """A single deployment action within a contract deployment plan."""
+
+    name: str
+    bytecode_builder: Callable[[Dict[str, str]], str]
+    constructor_args: bytes = b""
+    dependencies: Tuple[str, ...] = ()
 
 
 class ExecutionValidator:
@@ -167,108 +180,177 @@ class ExecutionValidator:
         
         return success, output if output else b"", storage_changes, gas_used
     
-    def validate_execution(
+    def _deploy_plan(
         self,
-        original_bytecode: str,
-        transpiled_bytecode: str,
+        plan: Sequence[DeploymentStep],
+        label: str,
+    ) -> Tuple[bool, Dict[str, str], Dict[str, Optional[int]], List[ExecutionReport]]:
+        """Deploy each step in a plan sequentially and record results."""
+
+        addresses: Dict[str, str] = {}
+        gas_usage: Dict[str, Optional[int]] = {}
+        reports: List[ExecutionReport] = []
+
+        for step in plan:
+            try:
+                bytecode = step.bytecode_builder(addresses)
+            except Exception as exc:  # pragma: no cover - defensive
+                reports.append(
+                    ExecutionReport(
+                        test_name=f"deploy[{label}]::{step.name}",
+                        status=ValidationResult.ERROR,
+                        message=f"Failed to construct bytecode: {exc}",
+                        details={
+                            "dependencies": step.dependencies,
+                        },
+                    )
+                )
+                return False, addresses, gas_usage, reports
+
+            if isinstance(bytecode, bytes):
+                bytecode = "0x" + bytecode.hex()
+            if not isinstance(bytecode, str):  # pragma: no cover - defensive
+                bytecode = str(bytecode)
+            if not bytecode.startswith("0x"):
+                bytecode = "0x" + bytecode
+
+            success, addr, output, gas_used = self.deploy_contract(
+                bytecode, constructor_args=step.constructor_args
+            )
+            gas_usage[step.name] = gas_used
+
+            bytecode_body = bytecode[2:] if bytecode.startswith("0x") else bytecode
+
+            details = {
+                "bytecode_length": len(bytecode_body) // 2,
+                "dependencies": step.dependencies,
+                "gas_used": gas_used,
+            }
+
+            if output:
+                details["output"] = (
+                    output.decode("utf-8", errors="replace")
+                    if isinstance(output, (bytes, bytearray))
+                    else output
+                )
+
+            if success and addr:
+                addresses[step.name] = addr
+                details["contract_address"] = addr
+                reports.append(
+                    ExecutionReport(
+                        test_name=f"deploy[{label}]::{step.name}",
+                        status=ValidationResult.PASS,
+                        message="Deployment succeeded",
+                        details=details,
+                    )
+                )
+            else:
+                reports.append(
+                    ExecutionReport(
+                        test_name=f"deploy[{label}]::{step.name}",
+                        status=ValidationResult.ERROR,
+                        message="Deployment failed",
+                        details=details,
+                    )
+                )
+                return False, addresses, gas_usage, reports
+
+        return True, addresses, gas_usage, reports
+
+    def validate_execution_from_plans(
+        self,
+        original_plan: Sequence[DeploymentStep],
+        transpiled_plan: Sequence[DeploymentStep],
+        target_name: str,
         test_cases: List[TestCase],
-        constructor_args: bytes = b"",
     ) -> List[ExecutionReport]:
-        """
-        Validate that two bytecodes behave identically.
-        
-        Args:
-            original_bytecode: Original deployment bytecode
-            transpiled_bytecode: Transpiled deployment bytecode
-            test_cases: List of test cases to execute
-        
-        Returns:
-            List of ExecutionReports
-        """
-        reports = []
-        
-        # Deploy both contracts in separate EVM instances
-        success1, addr1, deploy_output1, deploy_gas1 = self.deploy_contract(
-            original_bytecode, constructor_args=constructor_args
+        """Validate two deployment plans by executing paired test cases."""
+
+        step_reports: List[ExecutionReport] = []
+
+        # Deploy original plan
+        self.evm = EVM()
+        success_orig, orig_addresses, orig_gas, orig_reports = self._deploy_plan(
+            original_plan, label="original"
         )
-        if not success1:
-            reports.append(ExecutionReport(
+        step_reports.extend(orig_reports)
+        if not success_orig or target_name not in orig_addresses:
+            details = orig_reports[-1].details if orig_reports else {}
+            message = (
+                f"Target contract '{target_name}' was not deployed in original plan"
+                if target_name not in orig_addresses
+                else "Failed to deploy original contract"
+            )
+            summary = ExecutionReport(
                 test_name="deployment",
                 status=ValidationResult.ERROR,
-                message="Failed to deploy original contract",
-                details={
-                    "output": to_hex(deploy_output1) if deploy_output1 else None,
-                    "original_gas_used": deploy_gas1,
-                }
-            ))
-            return reports
-        
-        # Keep a handle to the original EVM
+                message=message,
+                details={"plan": "original", **(details or {})},
+            )
+            return [summary, *step_reports]
+
         evm_original = self.evm
 
-        # Use a fresh EVM for the transpiled contract
+        # Deploy transpiled plan
         self.evm = EVM()
-        success2, addr2, deploy_output2, deploy_gas2 = self.deploy_contract(
-            transpiled_bytecode, constructor_args=constructor_args
+        success_transp, transp_addresses, transp_gas, transp_reports = self._deploy_plan(
+            transpiled_plan, label="transpiled"
         )
-        if not success2:
-            error_msg = deploy_output2.decode('utf-8', errors='replace') if deploy_output2 else "Unknown error"
-            reports.append(ExecutionReport(
+        step_reports.extend(transp_reports)
+        if not success_transp or target_name not in transp_addresses:
+            details = transp_reports[-1].details if transp_reports else {}
+            message = (
+                f"Target contract '{target_name}' was not deployed in transpiled plan"
+                if target_name not in transp_addresses
+                else "Failed to deploy transpiled contract"
+            )
+            summary = ExecutionReport(
                 test_name="deployment",
                 status=ValidationResult.ERROR,
-                message=f"Failed to deploy transpiled contract: {error_msg}",
-                details={
-                    "output": to_hex(deploy_output2) if deploy_output2 else None,
-                    "error": error_msg,
-                    "original_gas_used": deploy_gas1,
-                    "transpiled_gas_used": deploy_gas2,
-                }
-            ))
-            return reports
+                message=message,
+                details={"plan": "transpiled", **(details or {})},
+            )
+            return [summary, *step_reports]
 
-        reports.append(ExecutionReport(
+        evm_transpiled = self.evm
+
+        summary = ExecutionReport(
             test_name="deployment",
             status=ValidationResult.PASS,
-            message="Both contracts deployed successfully",
+            message="Both deployment plans executed successfully",
             details={
-                "original_address": addr1,
-                "transpiled_address": addr2,
-                "original_gas_used": deploy_gas1,
-                "transpiled_gas_used": deploy_gas2,
-            }
-        ))
-        
-        # Keep a handle to the transpiled EVM
-        evm_transpiled = self.evm
+                "original_address": orig_addresses[target_name],
+                "transpiled_address": transp_addresses[target_name],
+                "original_gas_used": orig_gas.get(target_name),
+                "transpiled_gas_used": transp_gas.get(target_name),
+            },
+        )
+        all_reports: List[ExecutionReport] = [summary, *step_reports]
 
         # Execute test cases on both contracts using their respective EVMs
         for test_case in test_cases:
-            # Note: pyrevm doesn't have a direct way to clear storage
-            # Each test runs with the accumulated state
-            
-            # Execute on original
-            # Original
             self.evm = evm_original
             success1, output1, storage1, gas_used1 = self.execute_call(
-                addr1, 
+                orig_addresses[target_name],
                 test_case.calldata,
                 value=test_case.value,
-                gas_limit=test_case.gas_limit
+                gas_limit=test_case.gas_limit,
             )
-            
-            # Transpiled
+
             self.evm = evm_transpiled
             success2, output2, storage2, gas_used2 = self.execute_call(
-                addr2,
+                transp_addresses[target_name],
                 test_case.calldata,
                 value=test_case.value,
-                gas_limit=test_case.gas_limit
+                gas_limit=test_case.gas_limit,
             )
-            
-            # Compare results
+
             if success1 != success2:
                 status = ValidationResult.FAIL
-                message = f"Execution success mismatch: original={success1}, transpiled={success2}"
+                message = (
+                    f"Execution success mismatch: original={success1}, transpiled={success2}"
+                )
             elif test_case.expected_revert and not success1:
                 status = ValidationResult.PASS
                 message = "Both contracts reverted as expected"
@@ -277,13 +359,16 @@ class ExecutionValidator:
                 message = "Unexpected revert in both contracts"
             elif output1 != output2:
                 status = ValidationResult.FAIL
-                message = f"Output mismatch"
+                message = "Output mismatch"
             elif storage1 != storage2:
                 status = ValidationResult.FAIL
-                message = f"Storage mismatch"
-            elif test_case.expected_return is not None and output1 != test_case.expected_return:
+                message = "Storage mismatch"
+            elif (
+                test_case.expected_return is not None
+                and output1 != test_case.expected_return
+            ):
                 status = ValidationResult.FAIL
-                message = f"Output differs from expected"
+                message = "Output differs from expected"
             elif test_case.expected_storage is not None:
                 storage_matches = all(
                     storage1.get(slot, 0) == expected
@@ -298,24 +383,61 @@ class ExecutionValidator:
             else:
                 status = ValidationResult.PASS
                 message = "Execution matched perfectly"
-            
-            reports.append(ExecutionReport(
-                test_name=test_case.name,
-                status=status,
-                message=message,
-                details={
-                    "original_success": success1,
-                    "transpiled_success": success2,
-                    "original_output": to_hex(output1) if output1 else None,
-                    "transpiled_output": to_hex(output2) if output2 else None,
-                    "original_storage": storage1,
-                    "transpiled_storage": storage2,
-                    "original_gas_used": gas_used1,
-                    "transpiled_gas_used": gas_used2,
-                }
-            ))
-        
-        return reports
+
+            all_reports.append(
+                ExecutionReport(
+                    test_name=test_case.name,
+                    status=status,
+                    message=message,
+                    details={
+                        "original_success": success1,
+                        "transpiled_success": success2,
+                        "original_output": to_hex(output1) if output1 else None,
+                        "transpiled_output": to_hex(output2) if output2 else None,
+                        "original_storage": storage1,
+                        "transpiled_storage": storage2,
+                        "original_gas_used": gas_used1,
+                        "transpiled_gas_used": gas_used2,
+                    },
+                )
+            )
+
+        return all_reports
+
+    def validate_execution(
+        self,
+        original_bytecode: str,
+        transpiled_bytecode: str,
+        test_cases: List[TestCase],
+        constructor_args: bytes = b"",
+    ) -> List[ExecutionReport]:
+        """
+        Validate that two bytecodes behave identically (compat wrapper).
+        """
+
+        target_name = "__target__"
+
+        original_plan = [
+            DeploymentStep(
+                name=target_name,
+                bytecode_builder=lambda _addresses: original_bytecode,
+                constructor_args=constructor_args,
+            )
+        ]
+        transpiled_plan = [
+            DeploymentStep(
+                name=target_name,
+                bytecode_builder=lambda _addresses: transpiled_bytecode,
+                constructor_args=constructor_args,
+            )
+        ]
+
+        return self.validate_execution_from_plans(
+            original_plan,
+            transpiled_plan,
+            target_name=target_name,
+            test_cases=test_cases,
+        )
     
     def validate_simple_bytecode(self, original: str, transpiled: str) -> ExecutionReport:
         """

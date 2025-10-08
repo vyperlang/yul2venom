@@ -103,32 +103,7 @@ class SolcCompiler:
     def compile_to_bytecode(self, solidity_file: Path, optimize: bool = False) -> Tuple[str, str]:
         artifacts = self.compile_contract_artifacts(solidity_file, optimize=optimize)
 
-        if not artifacts:
-            return "", ""
-
-        target_name = solidity_file.stem.lower()
-        preferred: Optional[ContractArtifact] = None
-        fallback: Optional[ContractArtifact] = None
-
-        for artifact in artifacts.values():
-            name_match = artifact.contract_name == solidity_file.stem
-            case_insensitive_match = artifact.contract_name.lower() == target_name
-            has_code = bool(self._strip_0x(artifact.bytecode) or self._strip_0x(artifact.runtime_bytecode))
-
-            if not has_code:
-                continue
-
-            if name_match:
-                preferred = artifact
-                break
-
-            if case_insensitive_match and fallback is None:
-                fallback = artifact
-
-            if fallback is None:
-                fallback = artifact
-
-        selected = preferred or fallback
+        selected = self.select_primary_artifact(solidity_file, artifacts)
         if selected is None:
             return "", ""
 
@@ -170,6 +145,43 @@ class SolcCompiler:
             )
 
         return artifacts
+
+    def select_primary_artifact(
+        self,
+        solidity_file: Path,
+        artifacts: Mapping[str, ContractArtifact],
+    ) -> Optional[ContractArtifact]:
+        if not artifacts:
+            return None
+
+        target_stem = solidity_file.stem
+        target_lower = target_stem.lower()
+
+        def _has_code(artifact: ContractArtifact) -> bool:
+            return bool(
+                self._strip_0x(artifact.bytecode)
+                or self._strip_0x(artifact.runtime_bytecode)
+            )
+
+        non_empty = [artifact for artifact in artifacts.values() if _has_code(artifact)]
+        if not non_empty:
+            return None
+
+        for artifact in non_empty:
+            if artifact.contract_name == target_stem:
+                return artifact
+
+        for artifact in non_empty:
+            if artifact.contract_name.lower() == target_lower:
+                return artifact
+
+        return max(
+            non_empty,
+            key=lambda art: max(
+                len(self._strip_0x(art.runtime_bytecode)),
+                len(self._strip_0x(art.bytecode)),
+            ),
+        )
     
     def compile_to_json(self, solidity_file: Path, optimize: bool = False) -> Dict:
         """

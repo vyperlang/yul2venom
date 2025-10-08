@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import subprocess
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -19,6 +20,19 @@ sys.path.insert(0, "/Users/harkal/projects/charles_cooper/repos/vyper")
 # Import directly from the local yul.py file
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "vyper" / "cli"))
 import yul as yul_module
+from yul import (
+    Assign,
+    Block,
+    ExprStmt,
+    ForLoop,
+    FuncCall,
+    FunctionDef,
+    If,
+    Literal,
+    Switch,
+    VarDecl,
+    YulObject,
+)
 
 # Import Vyper modules
 from vyper.venom import generate_assembly_experimental, run_passes_on
@@ -31,6 +45,14 @@ class YulObjectInfo:
     name: str
     base_name: str
     ast: Any
+
+
+@dataclass(frozen=True)
+class YulBytecodeArtifact:
+    """Container for compiled deploy/runtime bytecode artefacts."""
+
+    deploy_bytecode: str
+    runtime_sections: Mapping[str, bytes]
 
 
 class YulTranspiler:
@@ -58,7 +80,8 @@ class YulTranspiler:
         optimize: bool = False,
         object_name: Optional[str] = None,
         link_libraries: Optional[Mapping[str, int | str]] = None,
-    ) -> str:
+        return_details: bool = False,
+    ) -> str | YulBytecodeArtifact:
         """
         Compile Yul code to EVM bytecode via Venom IR.
 
@@ -68,26 +91,23 @@ class YulTranspiler:
             optimize: Whether to apply optimizations
             object_name: Optional specific Yul object to compile (top-level)
             link_libraries: Mapping of linkersymbol identifiers to addresses
+            return_details: When True, include runtime metadata in the result
 
         Returns:
             Hex-encoded bytecode string
         """
-        yul_object = self._select_yul_object(yul_code, object_name)
-        ctx = self._compile_yul_object_to_ctx(
-            yul_object, optimize=optimize, link_libraries=link_libraries, run_passes=True
+        artifact = self._compile_yul_to_bytecode_artifact(
+            yul_code,
+            evm_version=evm_version,
+            optimize=optimize,
+            object_name=object_name,
+            link_libraries=link_libraries,
         )
 
-        asm = generate_assembly_experimental(
-            ctx, OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS
-        )
+        if return_details:
+            return artifact
 
-        embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
-        program_end_label_name = getattr(ctx, "program_end_label_name", None)
-        asm = yul_module.inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
-
-        bytecode, _ = generate_bytecode(asm)
-
-        return "0x" + bytecode.hex()
+        return artifact.deploy_bytecode
     
     def compile_yul_to_venom_ir(
         self,
@@ -107,8 +127,12 @@ class YulTranspiler:
             Venom IR as string
         """
         yul_object = self._select_yul_object(yul_code, object_name)
-        ctx = self._compile_yul_object_to_ctx(
-            yul_object, optimize=False, link_libraries=link_libraries, run_passes=False
+        ctx, _, _ = self._compile_yul_object_to_ctx(
+            yul_object,
+            optimize=False,
+            link_libraries=link_libraries,
+            run_passes=False,
+            allow_unresolved=True,
         )
         return str(ctx)
     
@@ -132,8 +156,12 @@ class YulTranspiler:
             Assembly as string
         """
         yul_object = self._select_yul_object(yul_code, object_name)
-        ctx = self._compile_yul_object_to_ctx(
-            yul_object, optimize=optimize, link_libraries=link_libraries, run_passes=True
+        ctx, data_functions, _ = self._compile_yul_object_to_ctx(
+            yul_object,
+            optimize=optimize,
+            link_libraries=link_libraries,
+            run_passes=True,
+            allow_unresolved=False,
         )
 
         asm = generate_assembly_experimental(
@@ -144,8 +172,142 @@ class YulTranspiler:
         program_end_label_name = getattr(ctx, "program_end_label_name", None)
         asm = yul_module.inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
 
+        if data_functions and hasattr(ctx, "functions"):
+            ctx.functions.update(data_functions)
+
         return str(asm)
-    
+
+    def _compile_yul_to_bytecode_artifact(
+        self,
+        yul_code: str,
+        evm_version: str,
+        optimize: bool,
+        object_name: Optional[str],
+        link_libraries: Optional[Mapping[str, int | str]],
+    ) -> YulBytecodeArtifact:
+        yul_object = self._select_yul_object(yul_code, object_name)
+        ctx, data_functions, _ = self._compile_yul_object_to_ctx(
+            yul_object,
+            optimize=optimize,
+            link_libraries=link_libraries,
+            run_passes=True,
+            allow_unresolved=False,
+        )
+
+        asm = generate_assembly_experimental(
+            ctx, OptimizationLevel.NONE if not optimize else OptimizationLevel.GAS
+        )
+
+        embedded_bytecode = getattr(ctx, "embedded_bytecode", None)
+        program_end_label_name = getattr(ctx, "program_end_label_name", None)
+        asm = yul_module.inject_embedded_bytecode(asm, embedded_bytecode, program_end_label_name)
+
+        bytecode, _ = generate_bytecode(asm)
+
+        runtime_sections: "OrderedDict[str, bytes]" = OrderedDict()
+        if embedded_bytecode:
+            for label in self._find_runtime_data_labels(yul_object):
+                data_key = f"{label}_data"
+                data_bytes = embedded_bytecode.get(data_key)
+                if isinstance(data_bytes, bytes):
+                    runtime_sections[label] = data_bytes
+
+        if data_functions and hasattr(ctx, "functions"):
+            ctx.functions.update(data_functions)
+
+        return YulBytecodeArtifact(
+            deploy_bytecode="0x" + bytecode.hex(),
+            runtime_sections=runtime_sections,
+        )
+
+    def _find_runtime_data_labels(self, yul_object: Any) -> Tuple[str, ...]:
+        """Best-effort detection of data sections returned by constructor code."""
+
+        from yul import Block, ForLoop, Switch
+
+        runtime_labels: List[str] = []
+        scope_stack: List[Dict[str, str]] = [{}]
+
+        def strip_quotes(value: str) -> str:
+            return value.strip('"')
+
+        def resolve_var(name: str) -> Optional[str]:
+            for scope in reversed(scope_stack):
+                if name in scope:
+                    return scope[name]
+            return None
+
+        def set_var(name: str, label: Optional[str]) -> None:
+            if label is None:
+                scope_stack[-1].pop(name, None)
+            else:
+                scope_stack[-1][name] = label
+
+        def resolve_expr(expr: Any) -> Optional[str]:
+            if isinstance(expr, str):
+                return resolve_var(expr)
+            if isinstance(expr, Literal) and isinstance(expr.value, str):
+                # String literals only map to data labels when referenced through datasize/dataoffset
+                return None
+            if isinstance(expr, FuncCall):
+                if expr.name in {"datasize", "dataoffset"} and expr.args:
+                    arg = expr.args[0]
+                    if isinstance(arg, Literal) and isinstance(arg.value, str):
+                        cleaned = strip_quotes(arg.value)
+                        return cleaned
+                for sub_expr in expr.args:
+                    label = resolve_expr(sub_expr)
+                    if label is not None:
+                        return label
+            return None
+
+        def visit_block(block: Block, create_scope: bool = True) -> None:
+            if create_scope:
+                scope_stack.append({})
+            for statement in block.statements:
+                visit_statement(statement)
+            if create_scope:
+                scope_stack.pop()
+
+        def visit_statement(stmt: Any) -> None:
+            if isinstance(stmt, Block):
+                visit_block(stmt)
+            elif isinstance(stmt, VarDecl):
+                label = resolve_expr(stmt.init) if stmt.init is not None else None
+                for name in stmt.names:
+                    set_var(name, label)
+            elif isinstance(stmt, Assign):
+                label = resolve_expr(stmt.value)
+                for name in stmt.targets:
+                    set_var(name, label)
+            elif isinstance(stmt, ExprStmt) and isinstance(stmt.expr, FuncCall):
+                call = stmt.expr
+                if call.name == "return" and len(call.args) >= 2:
+                    label = resolve_expr(call.args[1])
+                    if label and label not in runtime_labels:
+                        runtime_labels.append(label)
+                else:
+                    for arg in call.args:
+                        resolve_expr(arg)
+            elif isinstance(stmt, If):
+                visit_block(stmt.body)
+            elif isinstance(stmt, Switch):
+                for case in stmt.cases:
+                    visit_block(case.body)
+                if stmt.default is not None:
+                    visit_block(stmt.default)
+            elif isinstance(stmt, ForLoop):
+                scope_stack.append({})
+                visit_block(stmt.init, create_scope=False)
+                visit_block(stmt.body)
+                visit_block(stmt.post, create_scope=False)
+                scope_stack.pop()
+
+        if hasattr(yul_object, "code") and hasattr(yul_object.code, "block"):
+            visit_block(yul_object.code.block)
+
+        return tuple(runtime_labels)
+
     def compile_yul_file(
         self,
         yul_file: Path,
@@ -319,30 +481,103 @@ class YulTranspiler:
         optimize: bool,
         link_libraries: Optional[Mapping[str, int | str]] = None,
         run_passes: bool,
-    ) -> Any:
+        allow_unresolved: bool,
+    ) -> tuple[Any, Dict[str, Any], set[str]]:
         link_map = self._normalize_link_libraries(link_libraries)
         ctx = yul_module.compile_to_venom(yul_object, link_libraries=link_map or None)
 
         unresolved = getattr(ctx, "unresolved_link_references", set())
-        if unresolved:
+        if unresolved and not allow_unresolved:
             missing = ", ".join(sorted(unresolved))
             raise ValueError(f"Unresolved linkersymbol references: {missing}")
 
+        data_functions: Dict[str, Any] = {}
         if run_passes:
             original_functions = getattr(ctx, "functions", None)
             if hasattr(ctx, "functions"):
-                ctx.functions = {
-                    name: fn
-                    for name, fn in ctx.functions.items()
-                    if not getattr(fn, "is_data_section", False)
-                }
+                ctx.functions, data_functions = self._split_code_and_data_functions(original_functions)
 
             run_passes_on(ctx, OptimizationLevel.GAS if optimize else OptimizationLevel.NONE)
 
-            if original_functions is not None:
-                ctx.functions = original_functions
+        return ctx, data_functions, set(unresolved)
 
-        return ctx
+    @staticmethod
+    def _split_code_and_data_functions(functions: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        code_functions: Dict[str, Any] = {}
+        data_functions: Dict[str, Any] = {}
+        for name, fn in functions.items():
+            if getattr(fn, "is_data_section", False):
+                data_functions[name] = fn
+            else:
+                code_functions[name] = fn
+        return code_functions, data_functions
+
+    def get_linker_dependencies(
+        self,
+        yul_code: str,
+        object_name: Optional[str] = None,
+    ) -> set[str]:
+        """Return linkersymbol identifiers referenced by the specified object."""
+
+        yul_object = self._select_yul_object(yul_code, object_name)
+        dependencies: set[str] = set()
+
+        def visit_expr(expr: Any) -> None:
+            if isinstance(expr, FuncCall):
+                if expr.name == "linkersymbol" and expr.args:
+                    arg = expr.args[0]
+                    if isinstance(arg, Literal) and isinstance(arg.value, str):
+                        cleaned = arg.value.strip('"')
+                        cleaned = cleaned.strip("'")
+                        dependencies.add(cleaned)
+                for sub_expr in expr.args:
+                    visit_expr(sub_expr)
+            elif isinstance(expr, (list, tuple)):
+                for sub_expr in expr:
+                    visit_expr(sub_expr)
+
+        def visit_block(block: Block) -> None:
+            for stmt in block.statements:
+                visit_statement(stmt)
+
+        def visit_statement(stmt: Any) -> None:
+            if isinstance(stmt, Block):
+                visit_block(stmt)
+            elif isinstance(stmt, FunctionDef):
+                visit_block(stmt.body)
+            elif isinstance(stmt, VarDecl):
+                if stmt.init is not None:
+                    visit_expr(stmt.init)
+            elif isinstance(stmt, Assign):
+                visit_expr(stmt.value)
+            elif isinstance(stmt, If):
+                visit_expr(stmt.cond)
+                visit_block(stmt.body)
+            elif isinstance(stmt, Switch):
+                visit_expr(stmt.expr)
+                for case in stmt.cases:
+                    visit_expr(case.value)
+                    visit_block(case.body)
+                if stmt.default is not None:
+                    visit_block(stmt.default)
+            elif isinstance(stmt, ForLoop):
+                visit_block(stmt.init)
+                visit_expr(stmt.cond)
+                visit_block(stmt.post)
+                visit_block(stmt.body)
+            elif isinstance(stmt, ExprStmt):
+                visit_expr(stmt.expr)
+            # Break, Continue, Leave have no expressions to visit
+
+        def visit_object(obj: YulObject) -> None:
+            if obj.code:
+                visit_block(obj.code.block)
+            for sub in obj.subobjects:
+                if isinstance(sub, YulObject):
+                    visit_object(sub)
+
+        visit_object(yul_object)
+        return dependencies
 
     @staticmethod
     def _normalize_link_libraries(

@@ -168,3 +168,55 @@ def test_math512_transpiler_generates_outputs() -> None:
     bytecode = transpiler.compile_yul_to_bytecode(yul_code, optimize=False)
     assert bytecode.startswith("0x")
     assert len(bytecode) > 2
+
+
+def test_math512_transpiled_matches_solc_behavior() -> None:
+    compiler = _load_compiler()
+    yul_code = _compile_math512_yul(compiler)
+    creation_bytecode, _runtime = _compile_math512_bytecode(compiler)
+    if not creation_bytecode:
+        pytest.skip("solc did not produce deployment bytecode")
+
+    transpiler = YulTranspiler()
+    transpiled_bytecode = transpiler.compile_yul_to_bytecode(yul_code, optimize=False)
+
+    env = RevmEnvironment()
+    solc_ok, solc_address = env.deploy_contract(creation_bytecode, name="Math512Harness (solc)")
+    transpiled_ok, transpiled_address = env.deploy_contract(
+        transpiled_bytecode, name="Math512Harness (transpiled)"
+    )
+
+    if not solc_ok or solc_address is None:
+        pytest.skip("failed to deploy reference Math512Harness")
+    if not transpiled_ok or transpiled_address is None:
+        pytest.skip("failed to deploy transpiled Math512Harness")
+
+    test_vectors = [
+        ("modUint512(uint256,uint256,uint256)", [2, 5, 97], 1),
+        ("gtUint512(uint256,uint256,uint256,uint256)", [1, 0, 0, (1 << 256) - 1], 1),
+        ("compareToScalar(uint256,uint256,uint256)", [0, 123, 123], 2),
+    ]
+
+    bool_results_one = {"gtUint512(uint256,uint256,uint256,uint256)"}
+    bool_results_two = {"compareToScalar(uint256,uint256,uint256)"}
+
+    for signature, args, word_count in test_vectors:
+        solc_result = env.call_function(solc_address, signature, args)
+        transpiled_result = env.call_function(transpiled_address, signature, args)
+
+        assert solc_result.success, f"solc harness call failed for {signature}"
+        assert transpiled_result.success, f"transpiled harness call failed for {signature}"
+
+        solc_words = _decode_words(solc_result.output, word_count)
+        transpiled_words = _decode_words(transpiled_result.output, word_count)
+
+        if signature in bool_results_one:
+            solc_words = (bool(solc_words[0]),)
+            transpiled_words = (bool(transpiled_words[0]),)
+        elif signature in bool_results_two:
+            solc_words = tuple(bool(word) for word in solc_words)
+            transpiled_words = tuple(bool(word) for word in transpiled_words)
+
+        assert solc_words == transpiled_words, (
+            f"mismatch in {signature}: solc={solc_words}, transpiled={transpiled_words}"
+        )

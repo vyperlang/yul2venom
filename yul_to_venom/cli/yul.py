@@ -15,7 +15,7 @@ from abi_decode_handler import (
     parse_abi_decode_pattern,
 )
 from vyper.compiler.phases import generate_bytecode
-from vyper.compiler.settings import OptimizationLevel, Settings, set_global_settings
+from vyper.compiler.settings import Settings, set_global_settings, VenomOptimizationFlags
 from vyper.venom import generate_assembly_experimental, run_passes_on
 from vyper.venom.basicblock import IRBasicBlock, IRLabel, IRLiteral, IRVariable
 from vyper.venom.check_venom import check_venom_ctx
@@ -223,9 +223,7 @@ def _parse_args(argv: list[str]):
                            if not getattr(fn, 'is_data_section', False)}
 
             # Run full optimization pipeline
-            from vyper.venom import run_passes_on
-            from vyper.compiler.settings import OptimizationLevel
-            run_passes_on(ctx, OptimizationLevel.default())
+            run_passes_on(ctx, VenomOptimizationFlags())
 
             asm = generate_assembly_experimental(ctx)
             # Restore original functions
@@ -290,17 +288,13 @@ def _parse_args(argv: list[str]):
         print(output)
         return
 
-    # Run full optimization passes
-    from vyper.venom import run_passes_on
-    from vyper.compiler.settings import OptimizationLevel
-
     # Filter out data functions before optimization
     original_functions = ctx.functions.copy()
     ctx.functions = {name: fn for name, fn in ctx.functions.items()
                      if not getattr(fn, 'is_data_section', False)}
 
     # Run full optimization pipeline
-    run_passes_on(ctx, OptimizationLevel.default())
+    run_passes_on(ctx, VenomOptimizationFlags())
     
     if args.asm:
         asm = generate_assembly_experimental(ctx)
@@ -773,11 +767,7 @@ class YulToVenom:
                     self.object_immutable_usage.setdefault(obj_name, set()).update(keys)
                 
                 # Run full optimization passes on the nested context
-                from vyper.venom import run_passes_on
-                from vyper.compiler.settings import OptimizationLevel
-
-                # Run full optimization including all essential passes
-                run_passes_on(nested_ctx, OptimizationLevel.default())
+                run_passes_on(nested_ctx, VenomOptimizationFlags())
 
                 imm_keys = nested_compiler.object_immutable_usage.get(item.name, set())
                 imm_size = 0

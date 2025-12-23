@@ -752,8 +752,6 @@ class YulToVenom:
         # Remember object name for handling datasize("<object>")
         self.object_name = ast_node.name
 
-        # Set up constants for immutable handling (god help us all)
-        self.ctx.constants["mem_deploy_end"] = 0  # For now, immutables start at 0
         # Predeclare end label symbol for datasize calculation; define later
         self.program_end_label = IRLabel(f"{self.object_name}_end", True)
         # First, compile all nested objects to bytecode

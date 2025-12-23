@@ -28,7 +28,7 @@ from yul_to_venom.cli.yul import (
     YulObject,
 )
 from vyper.compiler.phases import generate_bytecode
-from vyper.compiler.settings import OptimizationLevel
+from vyper.compiler.settings import OptimizationLevel, VenomOptimizationFlags
 from vyper.venom import generate_assembly_experimental, run_passes_on
 
 
@@ -507,7 +507,7 @@ class YulTranspiler:
             if hasattr(ctx, "functions"):
                 ctx.functions, data_functions = self._split_code_and_data_functions(original_functions)
 
-            run_passes_on(ctx, OptimizationLevel.GAS if optimize else OptimizationLevel.NONE)
+            run_passes_on(ctx, VenomOptimizationFlags())
 
         return ctx, data_functions, set(unresolved)
 

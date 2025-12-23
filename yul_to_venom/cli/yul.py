@@ -777,7 +777,7 @@ class YulToVenom:
                         + IMMUTABLE_SLOT_SIZE
                     )
                     self.subobject_immutable_sizes[item.name] = imm_size
-                
+
                 # Generate assembly and bytecode with full optimization
                 asm = generate_assembly_experimental(nested_ctx)
                 embedded_bytecode = getattr(nested_ctx, "embedded_bytecode", None)
@@ -1476,6 +1476,7 @@ class YulToVenom:
                     # memoryguard reserves memory.. we could maybe
                     # call this 'reserve' (or reuse alloc)
                     opcode = "assign"
+
                 result = bb.append_instruction(opcode, *self._flatten_operands(args))
 
                 return result

@@ -31,3 +31,5 @@ scrap/
 *.log
 
 *.local.md
+.agent-files/
+.claude/

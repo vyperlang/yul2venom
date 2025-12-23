@@ -78,7 +78,7 @@ def _format_pct(pct: Optional[float], noun: str = "reduction") -> str:
 
 
 @dataclass
-class TestCase:
+class TestDefinition:
     """Test case definition."""
     name: str
     solidity_file: Path
@@ -133,7 +133,7 @@ class BytecodeResult:
 @dataclass
 class TestResult:
     """Result of a single test execution."""
-    test_case: TestCase
+    test_case: TestDefinition
     status: str  # "pass", "fail", "error", "skip"
     duration: float  # seconds
     validation_reports: List[Any]
@@ -182,7 +182,7 @@ class TestOrchestrator:
         
         self.results: List[TestResult] = []
     
-    def discover_tests(self) -> List[TestCase]:
+    def discover_tests(self) -> List[TestDefinition]:
         """
         Discover test cases from fixtures directory.
 
@@ -204,7 +204,7 @@ class TestOrchestrator:
             sol_file = solidity_dir / test_def.file
             defined_files.add(test_def.file)
             if sol_file.exists():
-                test_cases.append(TestCase(
+                test_cases.append(TestDefinition(
                     name=test_def.id,
                     solidity_file=sol_file,
                     description=test_def.description,
@@ -218,7 +218,7 @@ class TestOrchestrator:
                 # Check if test is in skip list
                 if test_name in skip_tests:
                     continue  # Will be added to skipped results in run_all_tests
-                test_cases.append(TestCase(
+                test_cases.append(TestDefinition(
                     name=test_name,
                     solidity_file=sol_file,
                     description=f"Test {sol_file.stem}",
@@ -227,7 +227,7 @@ class TestOrchestrator:
 
         return test_cases
 
-    def _compile_solidity(self, test_case: TestCase) -> CompilationResult:
+    def _compile_solidity(self, test_case: TestDefinition) -> CompilationResult:
         """
         Phase 1-2: Compile Solidity to Yul and bytecode.
 
@@ -292,7 +292,7 @@ class TestOrchestrator:
         )
 
     def _transpile_to_venom(
-        self, test_case: TestCase, comp: CompilationResult
+        self, test_case: TestDefinition, comp: CompilationResult
     ) -> TranspilationResult:
         """
         Phase 3: Transpile Yul to Venom IR.
@@ -577,7 +577,7 @@ class TestOrchestrator:
         )
 
     def _validate_execution(
-        self, test_case: TestCase, comp: CompilationResult, bytecode: BytecodeResult
+        self, test_case: TestDefinition, comp: CompilationResult, bytecode: BytecodeResult
     ) -> List[Any]:
         """Phase 5: Validate bytecode through execution."""
         print("\n[5/5] Validating bytecode through execution...")
@@ -623,7 +623,7 @@ class TestOrchestrator:
 
     def _build_result(
         self,
-        test_case: TestCase,
+        test_case: TestDefinition,
         comp: CompilationResult,
         transp: TranspilationResult,
         bytecode: BytecodeResult,
@@ -691,7 +691,7 @@ class TestOrchestrator:
             transpiled_call_gas=total_transpiled_gas if has_transpiled_gas else None,
         )
 
-    def run_test(self, test_case: TestCase) -> TestResult:
+    def run_test(self, test_case: TestDefinition) -> TestResult:
         """
         Run a single test case.
 
@@ -895,7 +895,7 @@ class TestOrchestrator:
             print(f"\n[SKIP] {test_name}: {reason[:80]}...")
             # Add a skip result
             self.results.append(TestResult(
-                test_case=TestCase(
+                test_case=TestDefinition(
                     name=test_name,
                     solidity_file=Path(f"fixtures/solidity/{test_name}.sol"),
                     description=f"Test {test_name}",

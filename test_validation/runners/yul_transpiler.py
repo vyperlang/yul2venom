@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,209 @@ class YulBytecodeArtifact:
 
     deploy_bytecode: str
     runtime_sections: Mapping[str, bytes]
+
+
+class YulASTVisitor(ABC):
+    """Base class for traversing Yul AST with visitor pattern."""
+
+    def __init__(self):
+        self.scope_stack: List[Dict[str, str]] = [{}]
+
+    def visit_object(self, obj: Any) -> None:
+        """Visit a YulObject node."""
+        if hasattr(obj, 'code') and obj.code:
+            self.visit_block(obj.code.block)
+        if hasattr(obj, 'subobjects'):
+            for sub in obj.subobjects:
+                if isinstance(sub, YulObject):
+                    self.visit_object(sub)
+
+    def visit_block(self, block: Block, create_scope: bool = True) -> None:
+        """Visit a Block node."""
+        if create_scope:
+            self.scope_stack.append({})
+        for statement in block.statements:
+            self.visit_statement(statement)
+        if create_scope:
+            self.scope_stack.pop()
+
+    def visit_statement(self, stmt: Any) -> None:
+        """Visit a statement node and dispatch to specific handlers."""
+        if isinstance(stmt, Block):
+            self.visit_block(stmt)
+        elif isinstance(stmt, VarDecl):
+            self.visit_var_decl(stmt)
+        elif isinstance(stmt, Assign):
+            self.visit_assign(stmt)
+        elif isinstance(stmt, ExprStmt):
+            self.visit_expr_stmt(stmt)
+        elif isinstance(stmt, If):
+            self.visit_if(stmt)
+        elif isinstance(stmt, Switch):
+            self.visit_switch(stmt)
+        elif isinstance(stmt, ForLoop):
+            self.visit_for_loop(stmt)
+        elif isinstance(stmt, FunctionDef):
+            self.visit_function_def(stmt)
+
+    @abstractmethod
+    def visit_var_decl(self, decl: VarDecl) -> None:
+        """Visit a variable declaration."""
+        pass
+
+    @abstractmethod
+    def visit_assign(self, assign: Assign) -> None:
+        """Visit an assignment."""
+        pass
+
+    @abstractmethod
+    def visit_expr_stmt(self, expr_stmt: ExprStmt) -> None:
+        """Visit an expression statement."""
+        pass
+
+    def visit_if(self, if_stmt: If) -> None:
+        """Visit an if statement."""
+        self.visit_expr(if_stmt.cond)
+        self.visit_block(if_stmt.body)
+
+    def visit_switch(self, switch: Switch) -> None:
+        """Visit a switch statement."""
+        self.visit_expr(switch.expr)
+        for case in switch.cases:
+            self.visit_expr(case.value)
+            self.visit_block(case.body)
+        if switch.default is not None:
+            self.visit_block(switch.default)
+
+    def visit_for_loop(self, for_loop: ForLoop) -> None:
+        """Visit a for loop."""
+        self.scope_stack.append({})
+        self.visit_block(for_loop.init, create_scope=False)
+        self.visit_expr(for_loop.cond)
+        self.visit_block(for_loop.post, create_scope=False)
+        self.visit_block(for_loop.body)
+        self.scope_stack.pop()
+
+    def visit_function_def(self, func_def: FunctionDef) -> None:
+        """Visit a function definition."""
+        self.visit_block(func_def.body)
+
+    @abstractmethod
+    def visit_expr(self, expr: Any) -> None:
+        """Visit an expression."""
+        pass
+
+
+class RuntimeDataLabelVisitor(YulASTVisitor):
+    """Visitor to detect data sections returned by constructor code."""
+
+    def __init__(self):
+        super().__init__()
+        self.runtime_labels: List[str] = []
+
+    @staticmethod
+    def _strip_quotes(value: str) -> str:
+        return value.strip('"')
+
+    def _resolve_var(self, name: str) -> Optional[str]:
+        """Resolve a variable name to its tracked label value."""
+        for scope in reversed(self.scope_stack):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def _set_var(self, name: str, label: Optional[str]) -> None:
+        """Set or clear a variable's tracked label value."""
+        if label is None:
+            self.scope_stack[-1].pop(name, None)
+        else:
+            self.scope_stack[-1][name] = label
+
+    def _resolve_expr(self, expr: Any) -> Optional[str]:
+        """Resolve an expression to a data label if it references one."""
+        if isinstance(expr, str):
+            return self._resolve_var(expr)
+        if isinstance(expr, Literal) and isinstance(expr.value, str):
+            # String literals only map to data labels when referenced through datasize/dataoffset
+            return None
+        if isinstance(expr, FuncCall):
+            if expr.name in {"datasize", "dataoffset"} and expr.args:
+                arg = expr.args[0]
+                if isinstance(arg, Literal) and isinstance(arg.value, str):
+                    cleaned = self._strip_quotes(arg.value)
+                    return cleaned
+            for sub_expr in expr.args:
+                label = self._resolve_expr(sub_expr)
+                if label is not None:
+                    return label
+        return None
+
+    def visit_var_decl(self, decl: VarDecl) -> None:
+        """Track variable declarations that may hold data labels."""
+        label = self._resolve_expr(decl.init) if decl.init is not None else None
+        for name in decl.names:
+            self._set_var(name, label)
+
+    def visit_assign(self, assign: Assign) -> None:
+        """Track assignments that may propagate data labels."""
+        label = self._resolve_expr(assign.value)
+        for name in assign.targets:
+            self._set_var(name, label)
+
+    def visit_expr_stmt(self, expr_stmt: ExprStmt) -> None:
+        """Check for return statements that reference data labels."""
+        if isinstance(expr_stmt.expr, FuncCall):
+            call = expr_stmt.expr
+            if call.name == "return" and len(call.args) >= 2:
+                label = self._resolve_expr(call.args[1])
+                if label and label not in self.runtime_labels:
+                    self.runtime_labels.append(label)
+            else:
+                for arg in call.args:
+                    self._resolve_expr(arg)
+
+    def visit_expr(self, expr: Any) -> None:
+        """Visit expression nodes."""
+        self._resolve_expr(expr)
+
+
+class LinkerDependencyVisitor(YulASTVisitor):
+    """Visitor to collect linkersymbol references."""
+
+    def __init__(self):
+        super().__init__()
+        self.dependencies: set[str] = set()
+
+    def _visit_expr_recursive(self, expr: Any) -> None:
+        """Recursively visit expressions to find linkersymbol calls."""
+        if isinstance(expr, FuncCall):
+            if expr.name == "linkersymbol" and expr.args:
+                arg = expr.args[0]
+                if isinstance(arg, Literal) and isinstance(arg.value, str):
+                    cleaned = arg.value.strip('"').strip("'")
+                    self.dependencies.add(cleaned)
+            for sub_expr in expr.args:
+                self._visit_expr_recursive(sub_expr)
+        elif isinstance(expr, (list, tuple)):
+            for sub_expr in expr:
+                self._visit_expr_recursive(sub_expr)
+
+    def visit_var_decl(self, decl: VarDecl) -> None:
+        """Visit variable declaration and check for linkersymbol in initializer."""
+        if decl.init is not None:
+            self._visit_expr_recursive(decl.init)
+
+    def visit_assign(self, assign: Assign) -> None:
+        """Visit assignment and check for linkersymbol in value."""
+        self._visit_expr_recursive(assign.value)
+
+    def visit_expr_stmt(self, expr_stmt: ExprStmt) -> None:
+        """Visit expression statement."""
+        self._visit_expr_recursive(expr_stmt.expr)
+
+    def visit_expr(self, expr: Any) -> None:
+        """Visit expression."""
+        self._visit_expr_recursive(expr)
 
 
 class YulTranspiler:
@@ -234,89 +438,10 @@ class YulTranspiler:
 
     def _find_runtime_data_labels(self, yul_object: Any) -> Tuple[str, ...]:
         """Best-effort detection of data sections returned by constructor code."""
-
-        runtime_labels: List[str] = []
-        scope_stack: List[Dict[str, str]] = [{}]
-
-        def strip_quotes(value: str) -> str:
-            return value.strip('"')
-
-        def resolve_var(name: str) -> Optional[str]:
-            for scope in reversed(scope_stack):
-                if name in scope:
-                    return scope[name]
-            return None
-
-        def set_var(name: str, label: Optional[str]) -> None:
-            if label is None:
-                scope_stack[-1].pop(name, None)
-            else:
-                scope_stack[-1][name] = label
-
-        def resolve_expr(expr: Any) -> Optional[str]:
-            if isinstance(expr, str):
-                return resolve_var(expr)
-            if isinstance(expr, Literal) and isinstance(expr.value, str):
-                # String literals only map to data labels when referenced through datasize/dataoffset
-                return None
-            if isinstance(expr, FuncCall):
-                if expr.name in {"datasize", "dataoffset"} and expr.args:
-                    arg = expr.args[0]
-                    if isinstance(arg, Literal) and isinstance(arg.value, str):
-                        cleaned = strip_quotes(arg.value)
-                        return cleaned
-                for sub_expr in expr.args:
-                    label = resolve_expr(sub_expr)
-                    if label is not None:
-                        return label
-            return None
-
-        def visit_block(block: Block, create_scope: bool = True) -> None:
-            if create_scope:
-                scope_stack.append({})
-            for statement in block.statements:
-                visit_statement(statement)
-            if create_scope:
-                scope_stack.pop()
-
-        def visit_statement(stmt: Any) -> None:
-            if isinstance(stmt, Block):
-                visit_block(stmt)
-            elif isinstance(stmt, VarDecl):
-                label = resolve_expr(stmt.init) if stmt.init is not None else None
-                for name in stmt.names:
-                    set_var(name, label)
-            elif isinstance(stmt, Assign):
-                label = resolve_expr(stmt.value)
-                for name in stmt.targets:
-                    set_var(name, label)
-            elif isinstance(stmt, ExprStmt) and isinstance(stmt.expr, FuncCall):
-                call = stmt.expr
-                if call.name == "return" and len(call.args) >= 2:
-                    label = resolve_expr(call.args[1])
-                    if label and label not in runtime_labels:
-                        runtime_labels.append(label)
-                else:
-                    for arg in call.args:
-                        resolve_expr(arg)
-            elif isinstance(stmt, If):
-                visit_block(stmt.body)
-            elif isinstance(stmt, Switch):
-                for case in stmt.cases:
-                    visit_block(case.body)
-                if stmt.default is not None:
-                    visit_block(stmt.default)
-            elif isinstance(stmt, ForLoop):
-                scope_stack.append({})
-                visit_block(stmt.init, create_scope=False)
-                visit_block(stmt.body)
-                visit_block(stmt.post, create_scope=False)
-                scope_stack.pop()
-
+        visitor = RuntimeDataLabelVisitor()
         if hasattr(yul_object, "code") and hasattr(yul_object.code, "block"):
-            visit_block(yul_object.code.block)
-
-        return tuple(runtime_labels)
+            visitor.visit_block(yul_object.code.block)
+        return tuple(visitor.runtime_labels)
 
     def compile_yul_file(
         self,
@@ -528,66 +653,10 @@ class YulTranspiler:
         object_name: Optional[str] = None,
     ) -> set[str]:
         """Return linkersymbol identifiers referenced by the specified object."""
-
         yul_object = self._select_yul_object(yul_code, object_name)
-        dependencies: set[str] = set()
-
-        def visit_expr(expr: Any) -> None:
-            if isinstance(expr, FuncCall):
-                if expr.name == "linkersymbol" and expr.args:
-                    arg = expr.args[0]
-                    if isinstance(arg, Literal) and isinstance(arg.value, str):
-                        cleaned = arg.value.strip('"')
-                        cleaned = cleaned.strip("'")
-                        dependencies.add(cleaned)
-                for sub_expr in expr.args:
-                    visit_expr(sub_expr)
-            elif isinstance(expr, (list, tuple)):
-                for sub_expr in expr:
-                    visit_expr(sub_expr)
-
-        def visit_block(block: Block) -> None:
-            for stmt in block.statements:
-                visit_statement(stmt)
-
-        def visit_statement(stmt: Any) -> None:
-            if isinstance(stmt, Block):
-                visit_block(stmt)
-            elif isinstance(stmt, FunctionDef):
-                visit_block(stmt.body)
-            elif isinstance(stmt, VarDecl):
-                if stmt.init is not None:
-                    visit_expr(stmt.init)
-            elif isinstance(stmt, Assign):
-                visit_expr(stmt.value)
-            elif isinstance(stmt, If):
-                visit_expr(stmt.cond)
-                visit_block(stmt.body)
-            elif isinstance(stmt, Switch):
-                visit_expr(stmt.expr)
-                for case in stmt.cases:
-                    visit_expr(case.value)
-                    visit_block(case.body)
-                if stmt.default is not None:
-                    visit_block(stmt.default)
-            elif isinstance(stmt, ForLoop):
-                visit_block(stmt.init)
-                visit_expr(stmt.cond)
-                visit_block(stmt.post)
-                visit_block(stmt.body)
-            elif isinstance(stmt, ExprStmt):
-                visit_expr(stmt.expr)
-            # Break, Continue, Leave have no expressions to visit
-
-        def visit_object(obj: YulObject) -> None:
-            if obj.code:
-                visit_block(obj.code.block)
-            for sub in obj.subobjects:
-                if isinstance(sub, YulObject):
-                    visit_object(sub)
-
-        visit_object(yul_object)
-        return dependencies
+        visitor = LinkerDependencyVisitor()
+        visitor.visit_object(yul_object)
+        return visitor.dependencies
 
     @staticmethod
     def _normalize_link_libraries(

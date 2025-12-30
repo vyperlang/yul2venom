@@ -8,8 +8,16 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from pyrevm import EVM
+from pyrevm import EVM, Env, CfgEnv
 from eth_utils import keccak, to_bytes, to_checksum_address, to_hex
+
+# Use local devnet chain_id to avoid mainnet-specific checks in contracts
+DEFAULT_CHAIN_ID = 31337
+
+
+def _create_evm() -> EVM:
+    """Create an EVM instance with the configured chain_id."""
+    return EVM(env=Env(cfg=CfgEnv(chain_id=DEFAULT_CHAIN_ID)))
 
 
 class ValidationResult(Enum):
@@ -72,7 +80,7 @@ class ExecutionValidator:
     
     def __init__(self):
         """Initialize the ExecutionValidator with pyrevm."""
-        self.evm = EVM()
+        self.evm = _create_evm()
         # pyrevm has default block environment, we can use it as is
     
     def deploy_contract(
@@ -391,7 +399,7 @@ class ExecutionValidator:
         step_reports: List[ExecutionReport] = []
 
         # Deploy original plan
-        self.evm = EVM()
+        self.evm = _create_evm()
         success_orig, orig_addresses, orig_gas, orig_reports = self._deploy_plan(
             original_plan, label="original"
         )
@@ -414,7 +422,7 @@ class ExecutionValidator:
         evm_original = self.evm
 
         # Deploy transpiled plan
-        self.evm = EVM()
+        self.evm = _create_evm()
         success_transp, transp_addresses, transp_gas, transp_reports = self._deploy_plan(
             transpiled_plan, label="transpiled"
         )
@@ -573,12 +581,12 @@ class ExecutionValidator:
             ExecutionReport
         """
         # Reset EVM
-        self.evm = EVM()
+        self.evm = _create_evm()
         
         success1, addr1, output1, gas1 = self.deploy_contract(original)
 
         # Reset for second deployment
-        self.evm = EVM()
+        self.evm = _create_evm()
 
         success2, addr2, output2, gas2 = self.deploy_contract(transpiled)
 

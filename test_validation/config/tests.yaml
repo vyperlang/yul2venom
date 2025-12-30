@@ -222,17 +222,13 @@ tests:
         function: "x()"
         expected_return_int: 42
 
-  # Skipped tests
   - id: mainnetflat
     file: MainnetFlat.sol
     description: "Test MainnetFlat"
     tags: [mainnet, skipped]
     skip_reason: >
-      MainnetSettler constructor requires DEPLOYER NFT ownership check.
-      pyrevm uses chainid=1 (not 31337), triggering the mainnet code path
-      which calls IERC721Owner(DEPLOYER).ownerOf(_tokenId()). This fails
-      because the DEPLOYER contract doesn't exist in the test environment.
-      This is a test environment limitation, not a compiler bug.
+      Constructor calls mainnet contracts (DAI, USDC, LitePSM) that don't exist
+      in clean test environment. Would need fork_url to fork mainnet state.
 
 # Default test cases for contracts without specific tests
 default_tests:

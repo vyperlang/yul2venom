@@ -40,6 +40,7 @@ class TestDefinition:
     skip_reason: Optional[str] = None
     test_case_key: Optional[str] = None
     execution_tests: List[ExecutionTest] = field(default_factory=list)
+    fork_url: Optional[str] = None  # RPC endpoint for mainnet fork (lazy-loading)
 
 
 @dataclass
@@ -89,6 +90,7 @@ def _parse_test_definition(data: Dict[str, Any]) -> TestDefinition:
         skip_reason=data.get("skip_reason"),
         test_case_key=data.get("test_case_key"),
         execution_tests=execution_tests,
+        fork_url=data.get("fork_url"),
     )
 
 

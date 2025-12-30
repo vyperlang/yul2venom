@@ -14,9 +14,22 @@ from eth_utils import keccak, to_bytes, to_checksum_address, to_hex
 # Use local devnet chain_id to avoid mainnet-specific checks in contracts
 DEFAULT_CHAIN_ID = 31337
 
+# Mainnet chain_id for fork mode
+MAINNET_CHAIN_ID = 1
 
-def _create_evm() -> EVM:
-    """Create an EVM instance with the configured chain_id."""
+
+def _create_evm(fork_url: Optional[str] = None) -> EVM:
+    """Create an EVM instance with the configured chain_id.
+
+    Args:
+        fork_url: Optional RPC endpoint to fork mainnet state from.
+                  When provided, uses mainnet chain_id and lazy-loads state.
+    """
+    if fork_url:
+        return EVM(
+            fork_url=fork_url,
+            env=Env(cfg=CfgEnv(chain_id=MAINNET_CHAIN_ID))
+        )
     return EVM(env=Env(cfg=CfgEnv(chain_id=DEFAULT_CHAIN_ID)))
 
 
@@ -77,11 +90,15 @@ class DeploymentStep:
 
 class ExecutionValidator:
     """Validator for comparing bytecode outputs through actual execution."""
-    
-    def __init__(self):
-        """Initialize the ExecutionValidator with pyrevm."""
-        self.evm = _create_evm()
-        # pyrevm has default block environment, we can use it as is
+
+    def __init__(self, fork_url: Optional[str] = None):
+        """Initialize the ExecutionValidator with pyrevm.
+
+        Args:
+            fork_url: Optional RPC endpoint to fork mainnet state from.
+        """
+        self.fork_url = fork_url
+        self.evm = _create_evm(fork_url)
     
     def deploy_contract(
         self,
@@ -399,7 +416,7 @@ class ExecutionValidator:
         step_reports: List[ExecutionReport] = []
 
         # Deploy original plan
-        self.evm = _create_evm()
+        self.evm = _create_evm(self.fork_url)
         success_orig, orig_addresses, orig_gas, orig_reports = self._deploy_plan(
             original_plan, label="original"
         )
@@ -422,7 +439,7 @@ class ExecutionValidator:
         evm_original = self.evm
 
         # Deploy transpiled plan
-        self.evm = _create_evm()
+        self.evm = _create_evm(self.fork_url)
         success_transp, transp_addresses, transp_gas, transp_reports = self._deploy_plan(
             transpiled_plan, label="transpiled"
         )
@@ -581,12 +598,12 @@ class ExecutionValidator:
             ExecutionReport
         """
         # Reset EVM
-        self.evm = _create_evm()
-        
+        self.evm = _create_evm(self.fork_url)
+
         success1, addr1, output1, gas1 = self.deploy_contract(original)
 
         # Reset for second deployment
-        self.evm = _create_evm()
+        self.evm = _create_evm(self.fork_url)
 
         success2, addr2, output2, gas2 = self.deploy_contract(transpiled)
 

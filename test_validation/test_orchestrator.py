@@ -67,7 +67,7 @@ class TestDefinition:
     description: str
     tags: List[str]
     expected_result: str = "pass"
-    fork_url: Optional[str] = None  # RPC endpoint for mainnet fork
+    fork_chain_id: Optional[int] = None  # Chain ID to fork (e.g., 1 for mainnet)
 
     def __str__(self):
         return f"{self.name}: {self.description}"
@@ -193,7 +193,7 @@ class TestOrchestrator:
                     solidity_file=sol_file,
                     description=test_def.description,
                     tags=test_def.tags,
-                    fork_url=test_def.fork_url,
+                    fork_chain_id=test_def.fork_chain_id,
                 ))
 
         # Also discover any additional .sol files not in config
@@ -566,13 +566,13 @@ class TestOrchestrator:
 
     def _validate_execution(
         self, test_case: TestDefinition, comp: CompilationResult, bytecode: BytecodeResult,
-        fork_url: Optional[str] = None,
+        fork_chain_id: Optional[int] = None,
     ) -> List[Any]:
         """Phase 5: Validate bytecode through execution."""
         print("\n[5/5] Validating bytecode through execution...")
 
-        if fork_url:
-            print(f"  Using mainnet fork: {fork_url[:50]}...")
+        if fork_chain_id is not None:
+            print(f"  Using fork of chain {fork_chain_id}")
 
         # Get test cases for this contract from YAML config
         contract_test_cases = get_execution_tests(test_case.name)
@@ -582,8 +582,12 @@ class TestOrchestrator:
         else:
             print(f"  Running {len(contract_test_cases)} test cases for {test_case.name}")
 
-        # Use fork-enabled validator if fork_url is specified
-        validator = ExecutionValidator(fork_url) if fork_url else self.execution_validator
+        # Use fork-enabled validator if fork_chain_id is specified
+        validator = (
+            ExecutionValidator(fork_chain_id)
+            if fork_chain_id is not None
+            else self.execution_validator
+        )
 
         validation_reports = validator.validate_execution_from_plans(
             bytecode.original_plan,
@@ -716,7 +720,7 @@ class TestOrchestrator:
 
             # Phase 5: Validate execution
             validation_reports = self._validate_execution(
-                test_case, comp, bytecode, fork_url=test_case.fork_url
+                test_case, comp, bytecode, fork_chain_id=test_case.fork_chain_id
             )
 
             # Build final result

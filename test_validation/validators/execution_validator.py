@@ -14,23 +14,38 @@ from eth_utils import keccak, to_bytes, to_checksum_address, to_hex
 # Use local devnet chain_id to avoid mainnet-specific checks in contracts
 DEFAULT_CHAIN_ID = 31337
 
-# Mainnet chain_id for fork mode
-MAINNET_CHAIN_ID = 1
+# Public RPC endpoints for forking chain state
+FORK_RPC_URLS: Dict[int, str] = {
+    1: "https://ethereum.publicnode.com",       # Ethereum Mainnet
+    10: "https://optimism.publicnode.com",      # Optimism
+    137: "https://polygon.publicnode.com",      # Polygon
+    8453: "https://base.publicnode.com",        # Base
+    42161: "https://arbitrum.publicnode.com",   # Arbitrum One
+}
 
 
-def _create_evm(fork_url: Optional[str] = None) -> EVM:
+def _create_evm(fork_chain_id: Optional[int] = None) -> EVM:
     """Create an EVM instance with the configured chain_id.
 
     Args:
-        fork_url: Optional RPC endpoint to fork mainnet state from.
-                  When provided, uses mainnet chain_id and lazy-loads state.
+        fork_chain_id: Optional chain ID to fork from. When provided,
+                       looks up the RPC URL and forks that chain's state.
+                       If DEFAULT_CHAIN_ID (31337), uses local EVM without forking.
     """
-    if fork_url:
-        return EVM(
-            fork_url=fork_url,
-            env=Env(cfg=CfgEnv(chain_id=MAINNET_CHAIN_ID))
+    if fork_chain_id is None or fork_chain_id == DEFAULT_CHAIN_ID:
+        # Local devnet - no forking
+        return EVM(env=Env(cfg=CfgEnv(chain_id=DEFAULT_CHAIN_ID)))
+
+    fork_url = FORK_RPC_URLS.get(fork_chain_id)
+    if not fork_url:
+        raise ValueError(
+            f"No RPC URL configured for chain_id {fork_chain_id}. "
+            f"Supported chains: {list(FORK_RPC_URLS.keys())}"
         )
-    return EVM(env=Env(cfg=CfgEnv(chain_id=DEFAULT_CHAIN_ID)))
+    return EVM(
+        fork_url=fork_url,
+        env=Env(cfg=CfgEnv(chain_id=fork_chain_id))
+    )
 
 
 class ValidationResult(Enum):
@@ -91,14 +106,14 @@ class DeploymentStep:
 class ExecutionValidator:
     """Validator for comparing bytecode outputs through actual execution."""
 
-    def __init__(self, fork_url: Optional[str] = None):
+    def __init__(self, fork_chain_id: Optional[int] = None):
         """Initialize the ExecutionValidator with pyrevm.
 
         Args:
-            fork_url: Optional RPC endpoint to fork mainnet state from.
+            fork_chain_id: Optional chain ID to fork from (e.g., 1 for mainnet).
         """
-        self.fork_url = fork_url
-        self.evm = _create_evm(fork_url)
+        self.fork_chain_id = fork_chain_id
+        self.evm = _create_evm(fork_chain_id)
     
     def deploy_contract(
         self,
@@ -416,7 +431,7 @@ class ExecutionValidator:
         step_reports: List[ExecutionReport] = []
 
         # Deploy original plan
-        self.evm = _create_evm(self.fork_url)
+        self.evm = _create_evm(self.fork_chain_id)
         success_orig, orig_addresses, orig_gas, orig_reports = self._deploy_plan(
             original_plan, label="original"
         )
@@ -439,7 +454,7 @@ class ExecutionValidator:
         evm_original = self.evm
 
         # Deploy transpiled plan
-        self.evm = _create_evm(self.fork_url)
+        self.evm = _create_evm(self.fork_chain_id)
         success_transp, transp_addresses, transp_gas, transp_reports = self._deploy_plan(
             transpiled_plan, label="transpiled"
         )
@@ -598,12 +613,12 @@ class ExecutionValidator:
             ExecutionReport
         """
         # Reset EVM
-        self.evm = _create_evm(self.fork_url)
+        self.evm = _create_evm(self.fork_chain_id)
 
         success1, addr1, output1, gas1 = self.deploy_contract(original)
 
         # Reset for second deployment
-        self.evm = _create_evm(self.fork_url)
+        self.evm = _create_evm(self.fork_chain_id)
 
         success2, addr2, output2, gas2 = self.deploy_contract(transpiled)
 

@@ -67,6 +67,7 @@ class TestDefinition:
     description: str
     tags: List[str]
     expected_result: str = "pass"
+    fork_url: Optional[str] = None  # RPC endpoint for mainnet fork
 
     def __str__(self):
         return f"{self.name}: {self.description}"
@@ -191,7 +192,8 @@ class TestOrchestrator:
                     name=test_def.id,
                     solidity_file=sol_file,
                     description=test_def.description,
-                    tags=test_def.tags
+                    tags=test_def.tags,
+                    fork_url=test_def.fork_url,
                 ))
 
         # Also discover any additional .sol files not in config
@@ -563,10 +565,14 @@ class TestOrchestrator:
         )
 
     def _validate_execution(
-        self, test_case: TestDefinition, comp: CompilationResult, bytecode: BytecodeResult
+        self, test_case: TestDefinition, comp: CompilationResult, bytecode: BytecodeResult,
+        fork_url: Optional[str] = None,
     ) -> List[Any]:
         """Phase 5: Validate bytecode through execution."""
         print("\n[5/5] Validating bytecode through execution...")
+
+        if fork_url:
+            print(f"  Using mainnet fork: {fork_url[:50]}...")
 
         # Get test cases for this contract from YAML config
         contract_test_cases = get_execution_tests(test_case.name)
@@ -576,7 +582,10 @@ class TestOrchestrator:
         else:
             print(f"  Running {len(contract_test_cases)} test cases for {test_case.name}")
 
-        validation_reports = self.execution_validator.validate_execution_from_plans(
+        # Use fork-enabled validator if fork_url is specified
+        validator = ExecutionValidator(fork_url) if fork_url else self.execution_validator
+
+        validation_reports = validator.validate_execution_from_plans(
             bytecode.original_plan,
             bytecode.transpiled_plan,
             target_name=comp.primary_artifact.fully_qualified_name,
@@ -706,7 +715,9 @@ class TestOrchestrator:
             bytecode = self._generate_bytecode(comp, transp)
 
             # Phase 5: Validate execution
-            validation_reports = self._validate_execution(test_case, comp, bytecode)
+            validation_reports = self._validate_execution(
+                test_case, comp, bytecode, fork_url=test_case.fork_url
+            )
 
             # Build final result
             duration = time.time() - start_time

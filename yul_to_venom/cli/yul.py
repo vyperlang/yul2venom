@@ -1432,9 +1432,11 @@ class YulToVenom:
                             return IRLiteral(self.subobject_sizes[arg_name])
                         # 2) Object-wide program size: compute end-start using label offsets
                         if self.object_name is not None and arg_name == self.object_name:
-                            # Use program-end label resolved by assembler
+                            # Use program-end label resolved by assembler.
+                            # Add 1 to account for the JUMPDEST byte that the end label creates.
                             assert self.program_end_label is not None
-                            return bb.append_instruction("offset", IRLiteral(0), self.program_end_label)
+                            offset_op = bb.append_instruction("offset", IRLiteral(0), self.program_end_label)
+                            return bb.append_instruction("add", offset_op, IRLiteral(1))
                         # 3) Unknown sections default to zero
                         return IRLiteral(0)
                 

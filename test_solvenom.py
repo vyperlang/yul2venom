@@ -12,14 +12,33 @@ from pathlib import Path
 
 import pytest
 
+# Repo root for path calculations
+REPO_ROOT = Path(__file__).parent
+
 # Test fixtures directory
-FIXTURES_DIR = Path(__file__).parent / "test_validation" / "fixtures" / "solidity"
+FIXTURES_DIR = REPO_ROOT / "test_validation" / "fixtures" / "solidity"
+
+
+def get_vyper_path():
+    """Get the path to the Vyper repository."""
+    # Check env var first
+    vyper_path = os.environ.get("VYPER_PATH")
+    if vyper_path and os.path.isdir(vyper_path):
+        return vyper_path
+    # Fall back to sibling directory
+    default_path = REPO_ROOT.parent / "vyper"
+    if default_path.is_dir():
+        return str(default_path)
+    raise RuntimeError(
+        "Vyper path not found. Set VYPER_PATH env var or clone vyper to ../vyper"
+    )
+
 
 # Environment setup for running the CLI
 def get_cli_env():
     """Get environment variables for CLI invocation."""
     env = os.environ.copy()
-    env["PYTHONPATH"] = "/Users/harkal/projects/charles_cooper/repos/vyper:."
+    env["PYTHONPATH"] = f"{get_vyper_path()}:."
     return env
 
 
@@ -226,3 +245,103 @@ class TestCompileAllFlag:
         assert "contracts" in data
         # Both contracts should be present
         assert "First" in data["contracts"] or "Second" in data["contracts"]
+
+
+class TestOptimizationFlags:
+    """Test optimization-related flags."""
+
+    def test_no_optimize_flag(self, simple_contract):
+        """Test --no-optimize flag works without crashing."""
+        result = run_solvenom(str(simple_contract), "--no-optimize")
+        bytecode = result.stdout.strip()
+
+        # Should still produce valid bytecode
+        assert bytecode.startswith("0x")
+        assert len(bytecode) > 10
+
+
+class TestEvmVersionFlag:
+    """Test EVM version selection."""
+
+    def test_evm_version_flag(self, simple_contract):
+        """Test --evm-version shanghai works."""
+        result = run_solvenom(str(simple_contract), "--evm-version", "shanghai")
+        bytecode = result.stdout.strip()
+
+        assert bytecode.startswith("0x")
+        assert len(bytecode) > 10
+
+
+class TestOutputFile:
+    """Test output to file."""
+
+    def test_output_to_file(self, simple_contract):
+        """Test -o flag writes to file instead of stdout."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False
+        ) as f:
+            output_path = f.name
+
+        try:
+            result = run_solvenom(str(simple_contract), "-o", output_path)
+
+            # stdout should be empty or minimal
+            assert result.stdout.strip() == "" or "0x" not in result.stdout
+
+            # File should contain bytecode
+            with open(output_path) as f:
+                content = f.read().strip()
+            assert content.startswith("0x")
+            assert len(content) > 10
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+
+
+class TestVerboseFlag:
+    """Test verbose output."""
+
+    def test_verbose_flag(self, simple_contract):
+        """Test -v flag outputs additional info to stderr."""
+        result = run_solvenom(str(simple_contract), "-v")
+
+        # Should still produce bytecode on stdout
+        assert result.stdout.strip().startswith("0x")
+
+        # stderr should have verbose output
+        assert len(result.stderr) > 0
+
+
+class TestContractAndAllConflict:
+    """Test mutual exclusivity of --contract and --all."""
+
+    def test_contract_and_all_conflict(self, multi_contract):
+        """Test that --contract and --all together errors."""
+        result = run_solvenom(
+            str(multi_contract), "--contract", "First", "--all", check=False
+        )
+        assert result.returncode != 0
+
+
+class TestLibraryFlag:
+    """Test library linking flags."""
+
+    def test_library_flag(self, simple_contract):
+        """Test --library flag is accepted."""
+        # Use a simple contract that doesn't need the library
+        result = run_solvenom(
+            str(simple_contract),
+            "--library",
+            "Math=0x1234567890123456789012345678901234567890",
+        )
+        bytecode = result.stdout.strip()
+
+        assert bytecode.startswith("0x")
+        assert len(bytecode) > 10
+
+    def test_library_invalid_format(self, simple_contract):
+        """Test --library with invalid format (missing =) errors."""
+        result = run_solvenom(
+            str(simple_contract), "--library", "InvalidFormat", check=False
+        )
+        assert result.returncode != 0

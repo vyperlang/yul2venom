@@ -5,6 +5,25 @@ from textwrap import dedent
 import subprocess
 import tempfile
 import os
+from pathlib import Path
+
+# Repo root for path calculations
+REPO_ROOT = Path(__file__).parent.parent
+
+
+def get_vyper_path():
+    """Get the path to the Vyper repository."""
+    # Check env var first
+    vyper_path = os.environ.get("VYPER_PATH")
+    if vyper_path and os.path.isdir(vyper_path):
+        return vyper_path
+    # Fall back to sibling directory
+    default_path = REPO_ROOT.parent / "vyper"
+    if default_path.is_dir():
+        return str(default_path)
+    raise RuntimeError(
+        "Vyper path not found. Set VYPER_PATH env var or clone vyper to ../vyper"
+    )
 
 
 def compile_yul_code(yul_code: str) -> str:
@@ -18,7 +37,7 @@ def compile_yul_code(yul_code: str) -> str:
         # Get Venom IR output
         cmd = ["python", "yul_to_venom/cli/yul.py", "--venom", yul_file]
         env = os.environ.copy()
-        env['PYTHONPATH'] = '/Users/harkal/projects/charles_cooper/repos/vyper:.'
+        env['PYTHONPATH'] = f'{get_vyper_path()}:.'
 
         result = subprocess.run(
             cmd,

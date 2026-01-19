@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
 
+__version__ = "0.1.0"
+
 # Add parent paths for imports
 _this_file = Path(__file__).resolve()
 _repo_root = _this_file.parents[2]
@@ -272,6 +274,9 @@ class SolVenomCompiler:
         primary = self.solc.select_primary_artifact(solidity_file, artifacts)
         primary_name = primary.contract_name if primary else None
 
+        if not results and artifacts:
+            warnings.append("All contracts skipped (abstract or interface with no bytecode)")
+
         return MultiContractResult(
             contracts=results,
             primary_contract=primary_name,
@@ -309,7 +314,10 @@ class SolVenomCompiler:
                     addr_str = address.strip()
                     if addr_str.startswith("0x"):
                         addr_str = addr_str[2:]
-                    result[ref] = int(addr_str, 16)
+                    try:
+                        result[ref] = int(addr_str, 16)
+                    except ValueError:
+                        raise ValueError(f"Invalid library address '{address}' for '{ref}': must be valid hex")
                 else:
                     result[ref] = int(address)
 
@@ -502,7 +510,18 @@ Examples:
         help="Import remapping (e.g., @openzeppelin/=lib/openzeppelin/) (can be repeated)",
     )
 
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+
     args = parser.parse_args()
+
+    # Check mutually exclusive options
+    if args.contract and args.all:
+        print("Error: --contract and --all cannot be used together", file=sys.stderr)
+        sys.exit(1)
 
     # Validate input file
     if not args.solidity_file.exists():
@@ -510,7 +529,7 @@ Examples:
         sys.exit(1)
 
     if not args.solidity_file.suffix == ".sol":
-        print(f"Warning: File does not have .sol extension", file=sys.stderr)
+        print(f"Warning: File '{args.solidity_file}' does not have .sol extension", file=sys.stderr)
 
     # Parse library addresses
     library_addresses = dict(args.libraries) if args.libraries else None
@@ -534,9 +553,9 @@ Examples:
     remappings = _get_remappings(args.solidity_file, base_path, args.remappings)
 
     # Determine output destination
-    output_file = open(args.output, "w") if args.output else sys.stdout
-
+    output_file = None
     try:
+        output_file = open(args.output, "w") if args.output else sys.stdout
         if args.all:
             # Compile all contracts
             result = compiler.compile_all(
@@ -621,7 +640,7 @@ Examples:
         sys.exit(1)
 
     finally:
-        if args.output:
+        if output_file is not None and args.output:
             output_file.close()
 
 

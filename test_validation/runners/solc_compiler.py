@@ -46,12 +46,14 @@ class SolcCompiler:
     
     def _verify_solc(self):
         """Verify that solc is available and get version."""
+        self.version = "unknown"
         try:
             result = subprocess.run(
                 [self.solc_path, "--version"],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=300,
             )
             # Parse version from output
             for line in result.stdout.split('\n'):
@@ -119,6 +121,7 @@ class SolcCompiler:
                 text=True,
                 check=True,
                 cwd=str(base_path.resolve()) if base_path else None,
+                timeout=300,
             )
 
             yul_code = self._extract_yul_from_output(result.stdout)
@@ -337,6 +340,7 @@ class SolcCompiler:
                 text=True,
                 check=True,
                 cwd=cwd,
+                timeout=300,
             )
 
             output = json.loads(result.stdout)

@@ -224,11 +224,16 @@ tests:
 
   - id: mainnetflat
     file: MainnetFlat.sol
-    description: "Test MainnetFlat"
-    tags: [mainnet, skipped]
+    description: "Test MainnetSettler from 0x Settler"
+    tags: [mainnet, fork, complex]
+    fork_chain_id: 1  # Fork Ethereum mainnet state (DAI, USDC, LitePSM, etc.)
+    local_chain_id: 31337  # Bypass SettlerBase NFT ownership check
+    code_size_limit: 100000  # Override EIP-170 24KB limit (runtime is 43KB)
     skip_reason: >
-      Constructor calls mainnet contracts (DAI, USDC, LitePSM) that don't exist
-      in clean test environment. Would need fork_url to fork mainnet state.
+      Transpiled bytecode fails with Panic(0x01) during constructor execution.
+      Original solc bytecode deploys successfully, but Yul-to-Venom transpiled
+      version triggers an assertion failure. Requires investigation into
+      transpilation differences.
 
 # Default test cases for contracts without specific tests
 default_tests:

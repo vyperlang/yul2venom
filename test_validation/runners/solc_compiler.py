@@ -61,13 +61,23 @@ class SolcCompiler:
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             raise RuntimeError(f"solc not found or not executable: {e}")
     
-    def compile_to_yul(self, solidity_file: Path, optimize: bool = False) -> str:
+    def compile_to_yul(
+        self,
+        solidity_file: Path,
+        optimize: bool = False,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
+    ) -> str:
         """
         Compile a Solidity file to Yul IR.
 
         Args:
             solidity_file: Path to the Solidity source file
             optimize: Whether to enable optimizer
+            base_path: Root directory for import resolution
+            include_paths: Additional directories to search for imports
+            remappings: Import path remappings (e.g., "@openzeppelin/=lib/openzeppelin/")
 
         Returns:
             Yul IR code as string
@@ -75,35 +85,63 @@ class SolcCompiler:
         if not solidity_file.exists():
             raise FileNotFoundError(f"Solidity file not found: {solidity_file}")
 
+        solidity_file = solidity_file.resolve()
+
         cmd = [
             self.solc_path,
             "--ir-optimized" if optimize else "--ir",
-            "--via-ir",  # Use IR pipeline to avoid stack too deep errors
+            "--via-ir",
             "--no-color",
-            str(solidity_file)
         ]
 
         if optimize:
             cmd.extend(["--optimize", "--optimize-runs", "200"])
-        
+
+        # Import resolution options
+        if base_path:
+            cmd.extend(["--base-path", str(base_path.resolve())])
+            cmd.extend(["--allow-paths", str(base_path.resolve())])
+
+        if include_paths:
+            for inc_path in include_paths:
+                cmd.extend(["--include-path", str(inc_path.resolve())])
+
+        if remappings:
+            for remap in remappings:
+                cmd.append(remap)
+
+        cmd.append(str(solidity_file))
+
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                cwd=str(base_path.resolve()) if base_path else None,
             )
-            
-            # Extract Yul code from output
-            # solc outputs the Yul after the IR/Optimized IR markers
+
             yul_code = self._extract_yul_from_output(result.stdout)
             return yul_code
-            
+
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Compilation failed: {e.stderr}")
     
-    def compile_to_bytecode(self, solidity_file: Path, optimize: bool = False) -> Tuple[str, str]:
-        artifacts = self.compile_contract_artifacts(solidity_file, optimize=optimize)
+    def compile_to_bytecode(
+        self,
+        solidity_file: Path,
+        optimize: bool = False,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
+    ) -> Tuple[str, str]:
+        artifacts = self.compile_contract_artifacts(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
 
         selected = self.select_primary_artifact(solidity_file, artifacts)
         if selected is None:
@@ -112,7 +150,12 @@ class SolcCompiler:
         return selected.bytecode, selected.runtime_bytecode
 
     def compile_contract_artifacts(
-        self, solidity_file: Path, optimize: bool = False
+        self,
+        solidity_file: Path,
+        optimize: bool = False,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
     ) -> Dict[str, ContractArtifact]:
         """Returns a mapping keyed by fully-qualified contract name in the form
         ``<filename>:<contract>``.
@@ -121,12 +164,29 @@ class SolcCompiler:
         if not solidity_file.exists():
             raise FileNotFoundError(f"Solidity file not found: {solidity_file}")
 
-        solc_json = self.compile_to_json(solidity_file, optimize=optimize)
-        contracts = solc_json.get("contracts", {}).get(solidity_file.name, {})
+        solidity_file = solidity_file.resolve()
+
+        # Compute source key matching compile_to_json
+        if base_path:
+            try:
+                source_key = str(solidity_file.relative_to(base_path.resolve()))
+            except ValueError:
+                source_key = solidity_file.name
+        else:
+            source_key = solidity_file.name
+
+        solc_json = self.compile_to_json(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
+        contracts = solc_json.get("contracts", {}).get(source_key, {})
 
         artifacts: Dict[str, ContractArtifact] = {}
         for name, entry in contracts.items():
-            fq_name = f"{solidity_file.name}:{name}"
+            fq_name = f"{source_key}:{name}"
             evm: Dict[str, Any] = entry.get("evm", {}) if entry else {}
             bytecode_info: Dict[str, Any] = evm.get("bytecode", {}) if evm else {}
             runtime_info: Dict[str, Any] = evm.get("deployedBytecode", {}) if evm else {}
@@ -139,7 +199,7 @@ class SolcCompiler:
             artifacts[fq_name] = ContractArtifact(
                 fully_qualified_name=fq_name,
                 contract_name=name,
-                source_path=solidity_file.name,
+                source_path=source_key,
                 bytecode=self._ensure_hex_prefix(bytecode_obj),
                 runtime_bytecode=self._ensure_hex_prefix(runtime_obj),
                 link_references=link_refs,
@@ -185,33 +245,54 @@ class SolcCompiler:
             ),
         )
     
-    def compile_to_json(self, solidity_file: Path, optimize: bool = False) -> Dict:
+    def compile_to_json(
+        self,
+        solidity_file: Path,
+        optimize: bool = False,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
+    ) -> Dict:
         """
         Compile a Solidity file and get full JSON output.
-        
+
         Args:
             solidity_file: Path to the Solidity source file
             optimize: Whether to enable optimizer
-        
+            base_path: Root directory for import resolution
+            include_paths: Additional directories to search for imports
+            remappings: Import path remappings (e.g., "@openzeppelin/=lib/openzeppelin/")
+
         Returns:
             JSON output from solc
         """
         if not solidity_file.exists():
             raise FileNotFoundError(f"Solidity file not found: {solidity_file}")
-        
-        # Prepare standard JSON input
-        with open(solidity_file, 'r') as f:
+
+        solidity_file = solidity_file.resolve()
+
+        # Read source content
+        with open(solidity_file, "r") as f:
             source_code = f.read()
-        
-        json_input = {
+
+        # Compute source key - use relative path from base_path for proper import resolution
+        if base_path:
+            try:
+                source_key = str(solidity_file.relative_to(base_path.resolve()))
+            except ValueError:
+                source_key = solidity_file.name
+        else:
+            source_key = solidity_file.name
+
+        json_input: Dict[str, Any] = {
             "language": "Solidity",
             "sources": {
-                str(solidity_file.name): {
+                source_key: {
                     "content": source_code
                 }
             },
             "settings": {
-                "viaIR": True,  # Use IR pipeline to avoid stack too deep errors
+                "viaIR": True,
                 "optimizer": {
                     "enabled": optimize,
                     "runs": 200
@@ -230,18 +311,45 @@ class SolcCompiler:
                 }
             }
         }
-        
+
+        if remappings:
+            json_input["settings"]["remappings"] = remappings
+
+        # Build command with import resolution flags
+        cmd = [self.solc_path, "--standard-json"]
+
+        if base_path:
+            cmd.extend(["--base-path", str(base_path.resolve())])
+            cmd.extend(["--allow-paths", str(base_path.resolve()) + "," + str(solidity_file.parent)])
+
+        if include_paths:
+            for inc_path in include_paths:
+                cmd.extend(["--include-path", str(inc_path.resolve())])
+
+        # Run solc from the base_path directory if specified
+        cwd = str(base_path.resolve()) if base_path else str(solidity_file.parent)
+
         try:
             result = subprocess.run(
-                [self.solc_path, "--standard-json"],
+                cmd,
                 input=json.dumps(json_input),
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                cwd=cwd,
             )
-            
-            return json.loads(result.stdout)
-            
+
+            output = json.loads(result.stdout)
+
+            # Check for errors in the output
+            if "errors" in output:
+                errors = [e for e in output["errors"] if e.get("severity") == "error"]
+                if errors:
+                    error_msgs = "\n".join(e.get("formattedMessage", e.get("message", "Unknown error")) for e in errors)
+                    raise RuntimeError(f"Compilation errors:\n{error_msgs}")
+
+            return output
+
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Compilation failed: {e.stderr}")
     

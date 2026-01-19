@@ -71,6 +71,9 @@ class SolVenomCompiler:
         output_venom: bool = False,
         output_asm: bool = False,
         library_addresses: Optional[Mapping[str, str]] = None,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
     ) -> CompilationResult:
         """
         Compile a single contract from a Solidity file.
@@ -82,12 +85,21 @@ class SolVenomCompiler:
             output_venom: Include Venom IR in result
             output_asm: Include assembly in result
             library_addresses: Mapping of library names to deployed addresses
+            base_path: Root directory for import resolution
+            include_paths: Additional directories to search for imports
+            remappings: Import path remappings
 
         Returns:
             CompilationResult with bytecode and optional IR/assembly
         """
         # Step 1: Get contract artifacts from solc
-        artifacts = self.solc.compile_contract_artifacts(solidity_file, optimize=optimize)
+        artifacts = self.solc.compile_contract_artifacts(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
 
         if not artifacts:
             raise ValueError(f"No contracts found in {solidity_file}")
@@ -109,7 +121,13 @@ class SolVenomCompiler:
                 raise ValueError("No deployable contracts found (all have empty bytecode)")
 
         # Step 2: Get Yul IR
-        yul_code = self.solc.compile_to_yul(solidity_file, optimize=optimize)
+        yul_code = self.solc.compile_to_yul(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
 
         # Step 3: Prepare link libraries
         link_libs = self._prepare_link_libraries(selected, library_addresses)
@@ -164,6 +182,9 @@ class SolVenomCompiler:
         output_venom: bool = False,
         output_asm: bool = False,
         library_addresses: Optional[Mapping[str, str]] = None,
+        base_path: Optional[Path] = None,
+        include_paths: Optional[List[Path]] = None,
+        remappings: Optional[List[str]] = None,
     ) -> MultiContractResult:
         """
         Compile all contracts from a Solidity file.
@@ -174,12 +195,27 @@ class SolVenomCompiler:
             output_venom: Include Venom IR in results
             output_asm: Include assembly in results
             library_addresses: Mapping of library names to deployed addresses
+            base_path: Root directory for import resolution
+            include_paths: Additional directories to search for imports
+            remappings: Import path remappings
 
         Returns:
             MultiContractResult with all compiled contracts
         """
-        artifacts = self.solc.compile_contract_artifacts(solidity_file, optimize=optimize)
-        yul_code = self.solc.compile_to_yul(solidity_file, optimize=optimize)
+        artifacts = self.solc.compile_contract_artifacts(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
+        yul_code = self.solc.compile_to_yul(
+            solidity_file,
+            optimize=optimize,
+            base_path=base_path,
+            include_paths=include_paths,
+            remappings=remappings,
+        )
 
         results: Dict[str, CompilationResult] = {}
         warnings: List[str] = []
@@ -391,6 +427,34 @@ Examples:
         help="Verbose output",
     )
 
+    # Import resolution options
+    parser.add_argument(
+        "--base-path",
+        type=Path,
+        default=None,
+        help="Root directory for import resolution",
+    )
+
+    parser.add_argument(
+        "--include-path", "-I",
+        action="append",
+        type=Path,
+        default=[],
+        dest="include_paths",
+        metavar="PATH",
+        help="Additional directory to search for imports (can be repeated)",
+    )
+
+    parser.add_argument(
+        "--remapping", "-r",
+        action="append",
+        type=str,
+        default=[],
+        dest="remappings",
+        metavar="CONTEXT:PREFIX=TARGET",
+        help="Import remapping (e.g., @openzeppelin/=lib/openzeppelin/) (can be repeated)",
+    )
+
     args = parser.parse_args()
 
     # Validate input file
@@ -417,6 +481,11 @@ Examples:
 
     optimize = not args.no_optimize
 
+    # Prepare import resolution options
+    base_path = args.base_path
+    include_paths = args.include_paths if args.include_paths else None
+    remappings = args.remappings if args.remappings else None
+
     try:
         if args.all:
             # Compile all contracts
@@ -426,6 +495,9 @@ Examples:
                 output_venom=args.json,
                 output_asm=args.json,
                 library_addresses=library_addresses,
+                base_path=base_path,
+                include_paths=include_paths,
+                remappings=remappings,
             )
 
             if args.json:
@@ -464,6 +536,9 @@ Examples:
                 output_venom=args.venom or args.json,
                 output_asm=args.asm or args.json,
                 library_addresses=library_addresses,
+                base_path=base_path,
+                include_paths=include_paths,
+                remappings=remappings,
             )
 
             if args.verbose:

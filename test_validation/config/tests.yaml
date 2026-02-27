@@ -72,38 +72,90 @@ tests:
         expected_return_abi:
           types: [uint256]
           values: [720]
+      - name: factorial_ten
+        function: "factorial(uint256)"
+        args: [10]
+        expected_return_abi:
+          types: [uint256]
+          values: [3628800]
+      - name: factorial_zero
+        function: "factorial(uint256)"
+        args: [0]
+        expected_return_abi:
+          types: [uint256]
+          values: [1]
       - name: fib_seven
         function: "fib(uint256)"
         args: [7]
         expected_return_abi:
           types: [uint256]
           values: [13]
+      - name: fib_twenty
+        function: "fib(uint256)"
+        args: [20]
+        expected_return_abi:
+          types: [uint256]
+          values: [6765]
+      - name: fib_zero
+        function: "fib(uint256)"
+        args: [0]
+        expected_return_abi:
+          types: [uint256]
+          values: [0]
 
   - id: HeavyMath
     file: HeavyMath.sol
     description: "Stress gas usage with heavy math"
     tags: [math, gas, heavy]
     execution_tests:
+      - name: sum_of_squares_50
+        function: "sumOfSquares(uint256)"
+        args: [50]
       - name: sum_of_squares_350
         function: "sumOfSquares(uint256)"
         args: [350]
         expected_return_int: 14352975
+      - name: sum_of_squares_1000
+        function: "sumOfSquares(uint256)"
+        args: [1000]
+      - name: factorial_mod_10
+        function: "factorialMod(uint256)"
+        args: [10]
       - name: factorial_mod_45
         function: "factorialMod(uint256)"
         args: [45]
         expected_return_int: 472639410
+      - name: factorial_mod_100
+        function: "factorialMod(uint256)"
+        args: [100]
+      - name: fibonacci_20
+        function: "fibonacci(uint256)"
+        args: [20]
+        expected_return_int: 6765
       - name: fibonacci_75
         function: "fibonacci(uint256)"
         args: [75]
         expected_return_int: 2111485077978050
+      - name: fibonacci_150
+        function: "fibonacci(uint256)"
+        args: [150]
+      - name: polynomial_reduce_small
+        function: "polynomialReduce(uint256)"
+        args: [42]
       - name: polynomial_reduce
         function: "polynomialReduce(uint256)"
         args: [987654321]
         expected_return_int: 604495212
+      - name: mixed_series_light
+        function: "mixedSeries(uint256,uint256)"
+        args: [5, 5]
       - name: mixed_series_heavy
         function: "mixedSeries(uint256,uint256)"
         args: [17, 12]
         expected_return_int: 862282241
+      - name: mixed_series_heavier
+        function: "mixedSeries(uint256,uint256)"
+        args: [42, 20]
 
   - id: simple_storage
     file: SimpleStorage.sol
@@ -137,34 +189,101 @@ tests:
         function: "add(uint256,uint256)"
         args: [5, 3]
         expected_return_int: 8
+      - name: add_large
+        function: "add(uint256,uint256)"
+        args: [999999999999, 1]
+        expected_return_int: 1000000000000
+      - name: subtract_10_3
+        function: "subtract(uint256,uint256)"
+        args: [10, 3]
+        expected_return_int: 7
+      - name: subtract_overflow_reverts
+        function: "subtract(uint256,uint256)"
+        args: [3, 10]
+        expected_revert: true
       - name: multiply_4_7
         function: "multiply(uint256,uint256)"
         args: [4, 7]
         expected_return_int: 28
-      - name: add_0_0
-        function: "add(uint256,uint256)"
-        args: [0, 0]
-        expected_return_int: 0
-      - name: multiply_0_100
+      - name: multiply_large
         function: "multiply(uint256,uint256)"
-        args: [0, 100]
+        args: [123456789, 987654321]
+        expected_return_int: 121932631112635269
+      - name: divide_100_7
+        function: "divide(uint256,uint256)"
+        args: [100, 7]
+        expected_return_int: 14
+      - name: divide_by_zero_reverts
+        function: "divide(uint256,uint256)"
+        args: [100, 0]
+        expected_revert: true
+      - name: modulo_100_7
+        function: "modulo(uint256,uint256)"
+        args: [100, 7]
+        expected_return_int: 2
+      - name: modulo_by_zero_reverts
+        function: "modulo(uint256,uint256)"
+        args: [100, 0]
+        expected_revert: true
+      - name: power_2_10
+        function: "power(uint256,uint256)"
+        args: [2, 10]
+        expected_return_int: 1024
+      - name: power_3_7
+        function: "power(uint256,uint256)"
+        args: [3, 7]
+        expected_return_int: 2187
+      - name: power_base_0
+        function: "power(uint256,uint256)"
+        args: [0, 5]
         expected_return_int: 0
+      - name: power_exp_0
+        function: "power(uint256,uint256)"
+        args: [999, 0]
+        expected_return_int: 1
+      - name: maximum_5_10
+        function: "maximum(uint256,uint256)"
+        args: [5, 10]
+        expected_return_int: 10
+      - name: maximum_equal
+        function: "maximum(uint256,uint256)"
+        args: [42, 42]
+        expected_return_int: 42
+      - name: minimum_5_10
+        function: "minimum(uint256,uint256)"
+        args: [5, 10]
+        expected_return_int: 5
 
   - id: control_flow
     file: ControlFlow.sol
     description: "Test control flow structures"
     tags: [control, loops, conditions]
-    # Maps to "ControlFlow" in TEST_CASES
     test_case_key: ControlFlow
     execution_tests:
       - name: for_loop_sum_5
         function: "forLoopSum(uint256)"
         args: [5]
         expected_return_int: 15
+      - name: for_loop_sum_100
+        function: "forLoopSum(uint256)"
+        args: [100]
+        expected_return_int: 5050
+      - name: for_loop_sum_500
+        function: "forLoopSum(uint256)"
+        args: [500]
+        expected_return_int: 125250
       - name: while_factorial_5
         function: "whileLoopFactorial(uint256)"
         args: [5]
         expected_return_int: 120
+      - name: while_factorial_10
+        function: "whileLoopFactorial(uint256)"
+        args: [10]
+        expected_return_int: 3628800
+      - name: while_factorial_0
+        function: "whileLoopFactorial(uint256)"
+        args: [0]
+        expected_return_int: 1
       - name: require_test_valid
         function: "requireTest(uint256)"
         args: [10]
@@ -181,10 +300,22 @@ tests:
         function: "nestedLoops(uint256)"
         args: [3]
         expected_return_int: 9
+      - name: nested_loops_10
+        function: "nestedLoops(uint256)"
+        args: [10]
+        expected_return_int: 100
+      - name: nested_loops_20
+        function: "nestedLoops(uint256)"
+        args: [20]
+        expected_return_int: 400
       - name: assert_test_10
         function: "assertTest(uint256)"
         args: [10]
         expected_return_int: 20
+      - name: assert_test_500
+        function: "assertTest(uint256)"
+        args: [500]
+        expected_return_int: 1000
 
   - id: immutable_simple
     file: ImmutableSimple.sol
@@ -221,6 +352,152 @@ tests:
       - name: get_x_initial
         function: "x()"
         expected_return_int: 42
+
+  - id: Math512WithDeps
+    file: Math512WithDeps.sol
+    description: "512-bit math library with harness contract"
+    tags: [math, 512bit, library, gas]
+    execution_tests:
+      # --- addUint256: 256-bit addition returning 512-bit result ---
+      - name: add256_small
+        function: "addUint256(uint256,uint256)"
+        args: [3, 5]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [0, 8]
+      - name: add256_overflow
+        function: "addUint256(uint256,uint256)"
+        args: [0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0]
+      - name: add256_max_max
+        function: "addUint256(uint256,uint256)"
+        args: [0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe]
+      # --- addUint512: full 512-bit addition ---
+      - name: add512_simple
+        function: "addUint512(uint256,uint256,uint256,uint256)"
+        args: [1, 0, 0, 5]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 5]
+      - name: add512_lo_carry
+        function: "addUint512(uint256,uint256,uint256,uint256)"
+        args: [0, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 0, 1]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0]
+      # --- addUint512Scalar: 512-bit + 256-bit scalar ---
+      - name: add512scalar_simple
+        function: "addUint512Scalar(uint256,uint256,uint256)"
+        args: [0, 100, 50]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [0, 150]
+      - name: add512scalar_carry
+        function: "addUint512Scalar(uint256,uint256,uint256)"
+        args: [0, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0]
+      # --- mulUint256: 256x256 -> 512-bit result ---
+      - name: mul256_small
+        function: "mulUint256(uint256,uint256)"
+        args: [7, 13]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [0, 91]
+      - name: mul256_large
+        function: "mulUint256(uint256,uint256)"
+        args: [0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 2]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe]
+      - name: mul256_squared_2pow128
+        function: "mulUint256(uint256,uint256)"
+        args: [340282366920938463463374607431768211456, 340282366920938463463374607431768211456]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [1, 0]
+      # --- gtUint512: 512-bit comparison ---
+      - name: gt512_true
+        function: "gtUint512(uint256,uint256,uint256,uint256)"
+        args: [1, 0, 0, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+        expected_return_abi:
+          types: [bool]
+          values: [true]
+      - name: gt512_false
+        function: "gtUint512(uint256,uint256,uint256,uint256)"
+        args: [0, 5, 0, 10]
+        expected_return_abi:
+          types: [bool]
+          values: [false]
+      - name: gt512_equal
+        function: "gtUint512(uint256,uint256,uint256,uint256)"
+        args: [1, 42, 1, 42]
+        expected_return_abi:
+          types: [bool]
+          values: [false]
+      # --- compareToScalar: 512-bit vs 256-bit comparison ---
+      - name: compare_equal
+        function: "compareToScalar(uint256,uint256,uint256)"
+        args: [0, 42, 42]
+        expected_return_abi:
+          types: [bool, bool]
+          values: [false, true]
+      - name: compare_greater
+        function: "compareToScalar(uint256,uint256,uint256)"
+        args: [0, 100, 50]
+        expected_return_abi:
+          types: [bool, bool]
+          values: [true, false]
+      - name: compare_less
+        function: "compareToScalar(uint256,uint256,uint256)"
+        args: [0, 10, 50]
+        expected_return_abi:
+          types: [bool, bool]
+          values: [false, false]
+      - name: compare_hi_nonzero
+        function: "compareToScalar(uint256,uint256,uint256)"
+        args: [1, 0, 5]
+        expected_return_abi:
+          types: [bool, bool]
+          values: [true, false]
+      # --- modUint512: 512-bit modulo ---
+      - name: mod512_simple
+        function: "modUint512(uint256,uint256,uint256)"
+        args: [0, 100, 7]
+        expected_return_int: 2
+      - name: mod512_large
+        function: "modUint512(uint256,uint256,uint256)"
+        args: [1, 0, 3]
+        expected_return_int: 1
+      - name: mod512_prime
+        function: "modUint512(uint256,uint256,uint256)"
+        args: [0, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1000000007]
+        expected_return_int: 792845265
+      # --- roundTripExternal: serialize/deserialize ---
+      - name: roundtrip_values
+        function: "roundTripExternal(uint256,uint256)"
+        args: [42, 99]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [42, 99]
+      - name: roundtrip_zeros
+        function: "roundTripExternal(uint256,uint256)"
+        args: [0, 0]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [0, 0]
+      - name: roundtrip_max
+        function: "roundTripExternal(uint256,uint256)"
+        args: [0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+        expected_return_abi:
+          types: [uint256, uint256]
+          values: [0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
 
   - id: mainnetflat
     file: MainnetFlat.sol

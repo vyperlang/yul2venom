@@ -6,8 +6,13 @@ echo "========================================"
 echo "Yul-to-Venom Validation System Test"
 echo "========================================"
 
-# Use python3.11 explicitly
-PYTHON=python3.11
+# Use the project's virtual environment
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+else
+    PYTHON=python3.12
+fi
 
 # Check if solc is installed
 if ! command -v solc &> /dev/null; then

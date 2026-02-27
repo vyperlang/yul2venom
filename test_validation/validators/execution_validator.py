@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from pyrevm import EVM, Env, CfgEnv
+from pyrevm import EVM
 from eth_utils import keccak, to_bytes, to_checksum_address, to_hex
 
 # Use local devnet chain_id to avoid mainnet-specific checks in contracts
@@ -26,27 +26,10 @@ FORK_RPC_URLS: Dict[int, str] = {
 
 def _create_evm(
     fork_chain_id: Optional[int] = None,
-    local_chain_id: Optional[int] = None,
-    code_size_limit: Optional[int] = None,
 ) -> EVM:
-    """Create an EVM instance with the configured chain_id.
-
-    Args:
-        fork_chain_id: Optional chain ID to fork from. When provided,
-                       looks up the RPC URL and forks that chain's state.
-                       If DEFAULT_CHAIN_ID (31337), uses local EVM without forking.
-        local_chain_id: Optional override for block.chainid when forking.
-                        Useful for bypassing on-chain deployment checks while
-                        still having access to forked state.
-        code_size_limit: Optional override for EIP-170 contract size limit (24KB).
-                         Set to a higher value for testing large contracts.
-    """
+    """Create an EVM instance, optionally forking from a chain."""
     if fork_chain_id is None or fork_chain_id == DEFAULT_CHAIN_ID:
-        # Local devnet - no forking
-        return EVM(env=Env(cfg=CfgEnv(
-            chain_id=DEFAULT_CHAIN_ID,
-            limit_contract_code_size=code_size_limit,
-        )))
+        return EVM()
 
     fork_url = FORK_RPC_URLS.get(fork_chain_id)
     if not fork_url:
@@ -54,15 +37,7 @@ def _create_evm(
             f"No RPC URL configured for chain_id {fork_chain_id}. "
             f"Supported chains: {list(FORK_RPC_URLS.keys())}"
         )
-    # Use local_chain_id if specified, otherwise use fork's chain_id
-    effective_chain_id = local_chain_id if local_chain_id is not None else fork_chain_id
-    return EVM(
-        fork_url=fork_url,
-        env=Env(cfg=CfgEnv(
-            chain_id=effective_chain_id,
-            limit_contract_code_size=code_size_limit,
-        ))
-    )
+    return EVM(fork_url=fork_url)
 
 
 class ValidationResult(Enum):
@@ -126,20 +101,10 @@ class ExecutionValidator:
     def __init__(
         self,
         fork_chain_id: Optional[int] = None,
-        local_chain_id: Optional[int] = None,
-        code_size_limit: Optional[int] = None,
     ):
-        """Initialize the ExecutionValidator with pyrevm.
-
-        Args:
-            fork_chain_id: Optional chain ID to fork from (e.g., 1 for mainnet).
-            local_chain_id: Optional override for block.chainid when forking.
-            code_size_limit: Optional override for EIP-170 contract size limit.
-        """
+        """Initialize the ExecutionValidator with pyrevm."""
         self.fork_chain_id = fork_chain_id
-        self.local_chain_id = local_chain_id
-        self.code_size_limit = code_size_limit
-        self.evm = _create_evm(fork_chain_id, local_chain_id, code_size_limit)
+        self.evm = _create_evm(fork_chain_id)
     
     def deploy_contract(
         self,
@@ -457,7 +422,7 @@ class ExecutionValidator:
         step_reports: List[ExecutionReport] = []
 
         # Deploy original plan
-        self.evm = _create_evm(self.fork_chain_id, self.local_chain_id, self.code_size_limit)
+        self.evm = _create_evm(self.fork_chain_id)
         success_orig, orig_addresses, orig_gas, orig_reports = self._deploy_plan(
             original_plan, label="original"
         )
@@ -480,7 +445,7 @@ class ExecutionValidator:
         evm_original = self.evm
 
         # Deploy transpiled plan
-        self.evm = _create_evm(self.fork_chain_id, self.local_chain_id, self.code_size_limit)
+        self.evm = _create_evm(self.fork_chain_id)
         success_transp, transp_addresses, transp_gas, transp_reports = self._deploy_plan(
             transpiled_plan, label="transpiled"
         )
@@ -639,12 +604,12 @@ class ExecutionValidator:
             ExecutionReport
         """
         # Reset EVM
-        self.evm = _create_evm(self.fork_chain_id, self.local_chain_id, self.code_size_limit)
+        self.evm = _create_evm(self.fork_chain_id)
 
         success1, addr1, output1, gas1 = self.deploy_contract(original)
 
         # Reset for second deployment
-        self.evm = _create_evm(self.fork_chain_id, self.local_chain_id, self.code_size_limit)
+        self.evm = _create_evm(self.fork_chain_id)
 
         success2, addr2, output2, gas2 = self.deploy_contract(transpiled)
 

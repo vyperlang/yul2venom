@@ -593,10 +593,10 @@ class TestOrchestrator:
         else:
             print(f"  Running {len(contract_test_cases)} test cases for {test_case.name}")
 
-        # Use custom validator if fork_chain_id or code_size_limit is specified
+        # Use custom validator if fork_chain_id is specified
         validator = (
-            ExecutionValidator(fork_chain_id, local_chain_id, code_size_limit)
-            if fork_chain_id is not None or code_size_limit is not None
+            ExecutionValidator(fork_chain_id)
+            if fork_chain_id is not None
             else self.execution_validator
         )
 
@@ -627,7 +627,16 @@ class TestOrchestrator:
 
         for report in execution_reports:
             symbol = "[OK]" if report.status == ValidationResult.PASS else "[FAIL]"
-            print(f"  {symbol} {report.test_name}: {report.message}")
+            details = report.details or {}
+            gas_orig = details.get("original_gas_used")
+            gas_trans = details.get("transpiled_gas_used")
+            gas_str = ""
+            if gas_orig is not None and gas_trans is not None:
+                diff = gas_orig - gas_trans
+                pct = diff / gas_orig * 100 if gas_orig > 0 else 0
+                sign = "+" if diff < 0 else ""
+                gas_str = f" (gas: {gas_orig} -> {gas_trans}, {sign}{pct:.1f}%)"
+            print(f"  {symbol} {report.test_name}: {report.message}{gas_str}")
 
         return validation_reports
 

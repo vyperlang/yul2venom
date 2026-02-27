@@ -18,6 +18,9 @@ htmlcov/
 .tox/
 .hypothesis/
 
+.agent-files/
+.sandbox
+
 # IDE
 .vscode/
 .idea/
